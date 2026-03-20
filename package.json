@@ -1,0 +1,8 @@
+{
+  "name": "webhook-mary",
+  "version": "1.0.0",
+  "description": "Webhook da Mary - Assistente virtual do Marido de Aluguel Petrópolis",
+  "dependencies": {
+    "groq-sdk": "^0.7.0"
+  }
+}
