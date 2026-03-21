@@ -1,12 +1,29 @@
 const http = require("http");
 const { handler } = require("./netlify/functions/webhook");
+const { getAllMemory } = require("./memory");
 
 const PORT = process.env.PORT || 3000;
 
 const server = http.createServer(async (req, res) => {
+  // Rota de status
+  if (req.method === "GET" && req.url === "/") {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("Mary webhook online 🤖");
+    return;
+  }
+
+  // Rota de admin: ver memória de todos os clientes
+  if (req.method === "GET" && req.url === "/memoria") {
+    const mem = getAllMemory();
+    const total = Object.keys(mem).length;
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ total_clientes: total, clientes: mem }, null, 2));
+    return;
+  }
+
   if (req.method !== "POST" || req.url !== "/webhook") {
-    res.writeHead(req.method === "GET" ? 200 : 405, { "Content-Type": "text/plain" });
-    res.end(req.method === "GET" ? "Mary webhook online 🤖" : "Method Not Allowed");
+    res.writeHead(405, { "Content-Type": "text/plain" });
+    res.end("Method Not Allowed");
     return;
   }
 

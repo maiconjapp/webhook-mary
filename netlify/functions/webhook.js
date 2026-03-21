@@ -1,5 +1,6 @@
 const Groq = require("groq-sdk");
 const { google } = require("googleapis");
+const { getMemoryContext, updateMemory } = require("../../memory");
 
 // Lazy init — GROQ_API_KEY é opcional (só usado como fallback)
 let _groq = null;
@@ -270,8 +271,18 @@ exports.handler = async (event) => {
   try {
     const today = new Date().toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo", weekday: "long", year: "numeric", month: "2-digit", day: "2-digit" });
     const todayISO = new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
-    const systemWithDate = SYSTEM_PROMPT + `\n\n## DATA ATUAL\nHoje é ${today} (${todayISO}). Use isso para calcular "amanhã", "semana que vem", etc.`;
+
+    // Carrega memória do cliente
+    const memoryContext = getMemoryContext(contact);
+    const memorySection = memoryContext
+      ? `\n\n## MEMÓRIA DESTE CLIENTE\nVocê já atendeu este cliente antes. Use essas informações naturalmente — não liste tudo de uma vez, apenas use quando relevante. Nunca pergunte algo que já está na memória.\n${memoryContext}`
+      : "";
+
+    const systemWithDate = SYSTEM_PROMPT + memorySection + `\n\n## DATA ATUAL\nHoje é ${today} (${todayISO}). Use isso para calcular "amanhã", "semana que vem", etc.`;
     const messages = [{ role: "system", content: systemWithDate }];
+
+    if (memoryContext) console.log(`[Memory] Contexto carregado para "${contact}"`);
+    else console.log(`[Memory] Cliente novo: "${contact}"`);
 
     // Processa mídia recebida
     let userMessageContent = message || "";
@@ -528,6 +539,71 @@ ${reply}`;
 
     console.log(`[${platform}] ${contact}: ${message}`);
     console.log(`[Mary]: ${reply}`);
+
+    // ── EXTRAÇÃO DE MEMÓRIA (async, não bloqueia resposta) ────────────────────
+    // Roda em background após responder — extrai dados novos da conversa
+    setImmediate(async () => {
+      try {
+        const conversationSample = messages
+          .filter(m => m.role === "user" || m.role === "assistant")
+          .slice(-8)
+          .map(m => `${m.role === "user" ? "Cliente" : "Mary"}: ${typeof m.content === "string" ? m.content : ""}`)
+          .join("\n");
+
+        const extractPrompt = `Analise esta conversa de WhatsApp de uma empresa de reparos residenciais e extraia informações sobre o cliente em JSON.
+
+Retorne APENAS um JSON válido com os campos que conseguir identificar com certeza na conversa. Se não tiver certeza, não inclua o campo. Nunca invente dados.
+
+Campos possíveis:
+- "nome": primeiro nome do cliente (só se ele se apresentou)
+- "endereco": endereço completo (só se ele informou explicitamente)
+- "bairro": bairro (só se mencionado)
+- "tipo_imovel": "casa" ou "apartamento" (só se ficou claro)
+- "servicos_solicitados": array com os serviços pedidos nesta conversa
+- "preferencia_horario": "manhã", "tarde", "noite" (só se demonstrou preferência clara)
+- "observacoes": qualquer detalhe útil para atendimentos futuros (ex: "tem pet", "portão difícil", "prefere Maicon")
+
+Conversa:
+${conversationSample}
+
+Retorne só o JSON, sem texto antes ou depois.`;
+
+        const extractRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${OPENROUTER_KEY}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://webhook-mary.netlify.app",
+            "X-Title": "Mary Memory Extractor",
+          },
+          body: JSON.stringify({
+            model: "meta-llama/llama-3.1-8b-instruct:free",
+            messages: [{ role: "user", content: extractPrompt }],
+            max_tokens: 300,
+            temperature: 0.1,
+          }),
+        });
+
+        if (extractRes.ok) {
+          const extractData = await extractRes.json();
+          const raw = extractData.choices?.[0]?.message?.content?.trim();
+          if (raw) {
+            // Extrai JSON mesmo que venha com texto ao redor
+            const jsonMatch = raw.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              const extracted = JSON.parse(jsonMatch[0]);
+              if (Object.keys(extracted).length > 0) {
+                updateMemory(contact, extracted);
+                console.log(`[Memory] Salvo para "${contact}":`, JSON.stringify(extracted));
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("[Memory] Erro na extração:", e.message);
+      }
+    });
+    // ── FIM DA EXTRAÇÃO ───────────────────────────────────────────────────────
 
     return {
       statusCode: 200,
