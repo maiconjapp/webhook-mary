@@ -1,31 +1,28 @@
 /**
- * Baileys WhatsApp Bot — Mary
- *
- * Conecta ao WhatsApp como dispositivo vinculado.
- * Recebe mensagens, analisa imagens, transcreve áudio e responde via Mary.
- * Comportamento humanizado: delay antes de responder, indicador de digitação.
+ * WhatsApp Bot — Mary
+ * Usa whatsapp-web.js (Puppeteer + Chrome headless) em vez de Baileys.
+ * Sem problemas de Bad MAC — usa a criptografia real do WhatsApp Web.
  */
 
-const { usePostgresAuthState } = require("./baileys-auth");
+const qrcode = require("qrcode");
 const { transcribeAudio } = require("./audio");
 const { handler } = require("./netlify/functions/webhook");
 const { isBlocked } = require("./memory");
-const qrcode = require("qrcode");
+const path = require("path");
+const fs = require("fs");
 
-// Estado global
-let sock = null;
+let client = null;
 let qrCodeDataURL = null;
 let isConnected = false;
 let reconnectTimer = null;
 
-// ── Controles de comportamento ────────────────────────────────────────────────
-
-// Números bloqueados gerenciados no banco (via dashboard)
-
-// Conversas onde um humano respondeu recentemente — Mary fica em silêncio
-// Map<contact, timestamp_ultimo_reply_humano>
+// Conversas onde humano respondeu — Mary fica em silêncio
 const humanHandledUntil = new Map();
-const HUMAN_SILENCE_MS = 60 * 60 * 1000; // 1 hora de silêncio após humano responder
+const HUMAN_SILENCE_MS = 60 * 60 * 1000; // 1 hora
+
+function getStatus() { return isConnected; }
+function getQR()     { return qrCodeDataURL; }
+function getSock()   { return client; } // compatibilidade com followup.js
 
 function markHumanHandled(contact) {
   humanHandledUntil.set(contact, Date.now());
@@ -34,17 +31,23 @@ function markHumanHandled(contact) {
 
 function isHumanHandling(contact) {
   if (!humanHandledUntil.has(contact)) return false;
-  const since = humanHandledUntil.get(contact);
-  if (Date.now() - since > HUMAN_SILENCE_MS) {
+  if (Date.now() - humanHandledUntil.get(contact) > HUMAN_SILENCE_MS) {
     humanHandledUntil.delete(contact);
     return false;
   }
   return true;
 }
 
-function getStatus() { return isConnected; }
-function getQR() { return qrCodeDataURL; }
-function getHumanHandled() { return humanHandledUntil; }
+function getHumanHandledList() {
+  const result = {};
+  for (const [c, ts] of humanHandledUntil) {
+    result[c] = {
+      since: new Date(ts).toISOString(),
+      until: new Date(ts + HUMAN_SILENCE_MS).toISOString(),
+    };
+  }
+  return result;
+}
 
 // ── Inicialização ─────────────────────────────────────────────────────────────
 
@@ -52,100 +55,71 @@ async function startWhatsApp() {
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
 
   try {
-    const {
-      default: makeWASocket,
-      DisconnectReason,
-      fetchLatestBaileysVersion,
-      downloadContentFromMessage,
-      makeCacheableSignalKeyStore,
-    } = await import("@whiskeysockets/baileys");
+    const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 
-    const { version } = await fetchLatestBaileysVersion();
-    console.log(`[WhatsApp] Baileys versão ${version.join(".")}`);
-
-    const { state, saveCreds } = await usePostgresAuthState();
-
-    sock = makeWASocket({
-      version,
-      auth: {
-        creds: state.creds,
-        keys: makeCacheableSignalKeyStore(state.keys, { level: "silent", ...console }),
+    client = new Client({
+      authStrategy: new LocalAuth({ dataPath: "/tmp/wwebjs_auth" }),
+      puppeteer: {
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium",
+        headless: true,
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-accelerated-2d-canvas",
+          "--disable-gpu",
+          "--no-first-run",
+          "--no-zygote",
+          "--single-process",
+          "--disable-extensions",
+        ],
       },
-      // Aparece como dispositivo linkado, não como bot
-      browser: ["Mary Assistente", "Chrome", "120.0.0"],
-      // Não aparece como online o tempo todo
-      markOnlineOnConnect: false,
-      // Não baixa histórico completo — economia de memória
-      syncFullHistory: false,
-      // Ignora updates de broadcast/status
-      shouldIgnoreJid: (jid) =>
-        jid === "status@broadcast" || jid.endsWith("@newsletter"),
     });
 
-    sock.ev.on("creds.update", saveCreds);
+    // QR code
+    client.on("qr", async (qr) => {
+      qrCodeDataURL = await qrcode.toDataURL(qr);
+      console.log("[WhatsApp] 📱 QR gerado — acesse /qr para escanear");
+    });
 
-    sock.ev.on("connection.update", async ({ connection, lastDisconnect, qr }) => {
-      if (qr) {
-        qrCodeDataURL = await qrcode.toDataURL(qr);
-        console.log("[WhatsApp] 📱 QR code gerado — acesse /qr para escanear");
-      }
+    // Autenticado
+    client.on("authenticated", () => {
+      console.log("[WhatsApp] 🔐 Autenticado!");
+    });
 
-      if (connection === "close") {
-        isConnected = false;
-        qrCodeDataURL = null;
-        const code = lastDisconnect?.error?.output?.statusCode;
-        const { loggedOut, restartRequired } = DisconnectReason;
+    // Conectado e pronto
+    client.on("ready", () => {
+      isConnected = true;
+      qrCodeDataURL = null;
+      console.log("[WhatsApp] ✅ Conectado e pronto!");
+    });
 
-        if (code === loggedOut) {
-          console.log("[WhatsApp] ❌ Deslogado — limpa sessão e reconecta");
-          await clearAuthState();
-          reconnectTimer = setTimeout(startWhatsApp, 3000);
-        } else if (code === restartRequired) {
-          console.log("[WhatsApp] 🔄 Restart necessário");
-          reconnectTimer = setTimeout(startWhatsApp, 2000);
-        } else {
-          console.log(`[WhatsApp] 🔌 Desconectado (código ${code}) — reconectando em 10s`);
-          reconnectTimer = setTimeout(startWhatsApp, 10000);
-        }
-      } else if (connection === "open") {
-        isConnected = true;
-        qrCodeDataURL = null;
-        connectedAt = Date.now();
-        console.log("[WhatsApp] ✅ Conectado e pronto! Período de graça de 45s para sync...");
-        setTimeout(() => console.log("[WhatsApp] ✅ Pronto para receber mensagens!"), SYNC_GRACE_MS);
+    // Desconectado
+    client.on("disconnected", (reason) => {
+      isConnected = false;
+      console.log("[WhatsApp] ❌ Desconectado:", reason);
+      client = null;
+      reconnectTimer = setTimeout(startWhatsApp, 10000);
+    });
+
+    // Mensagem recebida
+    client.on("message", async (msg) => {
+      try {
+        await handleMessage(msg, MessageMedia);
+      } catch (e) {
+        console.error("[WhatsApp] Erro ao processar msg:", e.message);
       }
     });
 
-    // Período de graça após conexão — ignora sync histórico por 45s
-    let connectedAt = null;
-    const SYNC_GRACE_MS = 45000;
-
-    sock.ev.on("messages.upsert", async ({ messages, type }) => {
-      if (type !== "notify") return;
-      for (const msg of messages) {
-        const jid = msg.key.remoteJid || "";
-
-        // Só processa mensagens diretas de números reais (ignora grupos, @lid, status)
-        if (!jid.endsWith("@s.whatsapp.net")) continue;
-
-        // Detecta quando o DONO respondeu manualmente para um cliente
-        if (msg.key.fromMe) {
-          const msgAge = Date.now() - ((msg.messageTimestamp || 0) * 1000);
-          const graceExpired = connectedAt && (Date.now() - connectedAt > SYNC_GRACE_MS);
-          const hasText = !!(msg.message?.conversation || msg.message?.extendedTextMessage?.text || msg.message?.imageMessage || msg.message?.audioMessage);
-          if (graceExpired && msgAge < 90000 && hasText) {
-            const contact = jid.replace("@s.whatsapp.net", "");
-            markHumanHandled(contact);
-          }
-          continue;
-        }
-
-        // Mensagem recebida de cliente — processa
-        handleMessage(msg, { downloadContentFromMessage }).catch((e) =>
-          console.error("[WhatsApp] Erro ao processar msg:", e.message)
-        );
+    // Detecta quando o dono (Maicon) responde manualmente
+    client.on("message_create", async (msg) => {
+      if (msg.fromMe && msg.to && !msg.to.endsWith("@g.us")) {
+        const contact = msg.to.replace("@c.us", "");
+        markHumanHandled(contact);
       }
     });
+
+    await client.initialize();
 
   } catch (err) {
     console.error("[WhatsApp] Erro ao iniciar:", err.message);
@@ -155,127 +129,93 @@ async function startWhatsApp() {
 
 // ── Processamento de mensagem ──────────────────────────────────────────────────
 
-async function handleMessage(msg, { downloadContentFromMessage }) {
-  // Só mensagens recebidas (não enviadas pelo dono)
-  if (msg.key.fromMe) return;
+async function handleMessage(msg, MessageMedia) {
+  // Ignora mensagens próprias
+  if (msg.fromMe) return;
 
-  const jid = msg.key.remoteJid;
+  // Ignora grupos
+  if (msg.from.endsWith("@g.us")) return;
 
-  // ── Sempre ignora grupos e broadcasts ────────────────────────────────────────
-  if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast") return;
+  const contact = msg.from.replace("@c.us", "");
 
-  const contact = jid.replace("@s.whatsapp.net", "");
-
-  // ── Verifica números bloqueados (banco de dados) ─────────────────────────────
+  // Verifica bloqueados
   if (await isBlocked(contact)) {
-    console.log(`[WhatsApp] 🚫 Número bloqueado: ${contact}`);
+    console.log(`[WhatsApp] 🚫 Bloqueado: ${contact}`);
     return;
   }
 
-  // ── Verifica se humano está gerenciando essa conversa ─────────────────────────
+  // Verifica se humano está gerenciando
   if (isHumanHandling(contact)) {
-    console.log(`[WhatsApp] 🙋 Humano gerenciando "${contact}" — Mary ignorando`);
+    console.log(`[WhatsApp] 🙋 Humano gerenciando "${contact}" — ignorando`);
     return;
   }
 
-  const messageContent = msg.message;
-  if (!messageContent) return;
-
-  // ── Extrai conteúdo da mensagem ──────────────────────────────────────────────
   let text = "";
   let mediaType = "text";
   let imageBase64 = null;
 
-  if (messageContent.conversation) {
-    text = messageContent.conversation;
+  // ── Tipo de mensagem ────────────────────────────────────────────────────────
+  if (msg.hasMedia) {
+    const media = await msg.downloadMedia().catch(() => null);
 
-  } else if (messageContent.extendedTextMessage?.text) {
-    text = messageContent.extendedTextMessage.text;
-
-  } else if (messageContent.imageMessage) {
-    mediaType = "image";
-    text = messageContent.imageMessage.caption || "[Foto sem legenda]";
-
-    try {
-      const stream = await downloadContentFromMessage(
-        messageContent.imageMessage,
-        "image"
-      );
-      const chunks = [];
-      for await (const chunk of stream) chunks.push(chunk);
-      imageBase64 = Buffer.concat(chunks).toString("base64");
-      console.log(`[WhatsApp] 📷 Imagem baixada (${Math.round(imageBase64.length * 0.75 / 1024)}KB)`);
-    } catch (e) {
-      console.warn("[WhatsApp] Não conseguiu baixar imagem:", e.message);
-    }
-
-  } else if (messageContent.audioMessage) {
-    mediaType = "audio";
-    text = "[Áudio]";
-
-    try {
-      const mimeType = messageContent.audioMessage.mimetype || "audio/ogg";
-      const stream = await downloadContentFromMessage(
-        messageContent.audioMessage,
-        "audio"
-      );
-      const chunks = [];
-      for await (const chunk of stream) chunks.push(chunk);
-      const buffer = Buffer.concat(chunks);
-      console.log(`[WhatsApp] 🎤 Áudio baixado (${Math.round(buffer.length / 1024)}KB) — transcrevendo...`);
-
-      const transcription = await transcribeAudio(buffer, mimeType);
-      if (transcription) {
-        text = `[Áudio do cliente transcrito: "${transcription}"]`;
-        mediaType = "text"; // trata como texto após transcrição
-        console.log(`[WhatsApp] 📝 Transcrição: "${transcription.substring(0, 80)}..."`);
+    if (msg.type === "image" || msg.type === "sticker") {
+      mediaType = msg.type === "sticker" ? "sticker" : "image";
+      text = msg.body || "[Foto]";
+      if (media?.data) {
+        imageBase64 = media.data; // já é base64 no wwebjs
+        console.log(`[WhatsApp] 📷 Imagem baixada`);
       }
-    } catch (e) {
-      console.warn("[WhatsApp] Não conseguiu transcrever áudio:", e.message);
+
+    } else if (msg.type === "ptt" || msg.type === "audio") {
+      mediaType = "audio";
+      text = "[Áudio]";
+      if (media?.data) {
+        const buffer = Buffer.from(media.data, "base64");
+        const mime = media.mimetype || "audio/ogg";
+        console.log(`[WhatsApp] 🎤 Áudio baixado (${Math.round(buffer.length / 1024)}KB) — transcrevendo...`);
+        const transcription = await transcribeAudio(buffer, mime);
+        if (transcription) {
+          text = `[Áudio transcrito: "${transcription}"]`;
+          mediaType = "text";
+          console.log(`[WhatsApp] 📝 Transcrição: "${transcription.substring(0, 80)}"`);
+        }
+      }
+
+    } else if (msg.type === "video") {
+      mediaType = "video";
+      text = "[Vídeo]";
+
+    } else if (msg.type === "document") {
+      mediaType = "document";
+      text = `[Documento: ${msg.body || "arquivo"}]`;
     }
-
-  } else if (messageContent.videoMessage) {
-    mediaType = "video";
-    text = "[Vídeo]";
-
-  } else if (messageContent.documentMessage) {
-    mediaType = "document";
-    text = `[Documento: ${messageContent.documentMessage.fileName || "arquivo"}]`;
-
-  } else if (messageContent.stickerMessage) {
-    // Sticker: reage com emoji de coração e continua
-    text = "[Sticker/figurinha]";
-    mediaType = "sticker";
-
-  } else if (messageContent.reactionMessage) {
-    return; // ignora reações
 
   } else {
-    return; // ignora tipos não suportados
+    text = msg.body || "";
   }
 
   if (!text.trim()) return;
 
-  const senderName = msg.pushName || contact;
-
+  const senderName = (await msg.getContact().catch(() => null))?.pushname || contact;
   console.log(`[WhatsApp] 📩 ${senderName}: "${text.substring(0, 60)}"`);
 
   // Marca como lida
-  await sock.readMessages([msg.key]).catch(() => {});
+  await msg.getChat().then(c => c.sendSeen()).catch(() => {});
 
-  // ── Delay humanizado: 2-5s antes de começar a "digitar" ─────────────────────
+  // Delay humanizado: 2–5s
   await sleep(2000 + Math.random() * 3000);
 
-  // Indicador de digitação
-  await sock.sendPresenceUpdate("composing", jid).catch(() => {});
+  // Indicador de digitando
+  const chat = await msg.getChat().catch(() => null);
+  if (chat) await chat.sendStateTyping().catch(() => {});
 
-  // ── Chama o webhook para gerar a resposta ────────────────────────────────────
+  // Chama Mary
   const event = {
     httpMethod: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       contact: senderName,
-      platform: "WhatsApp-Baileys",
+      platform: "WhatsApp-Web",
       message: text,
       mediaType,
       imageBase64,
@@ -290,47 +230,53 @@ async function handleMessage(msg, { downloadContentFromMessage }) {
     reply = parsed.reply || "";
   } catch (e) {
     console.error("[WhatsApp] Erro no handler:", e.message);
-    await sock.sendPresenceUpdate("paused", jid).catch(() => {});
+    if (chat) await chat.clearState().catch(() => {});
     return;
   }
 
   if (!reply.trim()) {
-    await sock.sendPresenceUpdate("paused", jid).catch(() => {});
+    if (chat) await chat.clearState().catch(() => {});
     return;
   }
 
-  // ── Delay de "digitação" baseado no tamanho da resposta ─────────────────────
-  // Simula ~120 chars/segundo como uma digitação rápida humana, limite 8s
+  // Delay de digitação baseado no tamanho da resposta
   const typingMs = Math.min(1500 + reply.length * 25, 8000);
   await sleep(typingMs);
 
-  await sock.sendPresenceUpdate("paused", jid).catch(() => {});
+  if (chat) await chat.clearState().catch(() => {});
 
-  // ── Envia resposta ────────────────────────────────────────────────────────────
-  await sock.sendMessage(jid, { text: reply });
+  // Envia resposta
+  await client.sendMessage(msg.from, reply);
   console.log(`[WhatsApp] ✅ Resposta enviada para ${senderName} (${reply.length} chars)`);
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+// ── Limpa sessão ───────────────────────────────────────────────────────────────
 
 async function clearAuthState() {
-  const { clearAuthState: _clear } = require("./baileys-auth");
-  await _clear();
-}
+  try {
+    if (client) {
+      await client.destroy().catch(() => {});
+      client = null;
+    }
+    isConnected = false;
 
-function getSock() { return sock; }
+    // Limpa arquivos de sessão
+    const dir = "/tmp/wwebjs_auth";
+    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
 
-// Permite que o dashboard mostre/gerencie conversas humanas e números bloqueados
-function getHumanHandledList() {
-  const result = {};
-  for (const [contact, ts] of humanHandledUntil) {
-    result[contact] = { since: new Date(ts).toISOString(), until: new Date(ts + HUMAN_SILENCE_MS).toISOString() };
+    // Limpa backup do DB
+    const { Pool } = require("pg");
+    if (process.env.DATABASE_URL) {
+      const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: false });
+      await pool.query("DELETE FROM baileys_files");
+      await pool.end();
+    }
+    console.log("[WhatsApp] Sessão limpa");
+  } catch (e) {
+    console.warn("[WhatsApp] Erro ao limpar sessão:", e.message);
   }
-  return result;
 }
 
-module.exports = { startWhatsApp, getQR, getStatus, getSock, markHumanHandled, getHumanHandledList };
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+module.exports = { startWhatsApp, getQR, getStatus, getSock, getHumanHandledList, clearAuthState };
