@@ -277,13 +277,13 @@ exports.handler = async (event) => {
     let userMessageContent = message || "";
 
     if (mediaType === "audio") {
-      userMessageContent = "[O cliente enviou um áudio]";
+      userMessageContent = "[O cliente enviou um áudio. Você não consegue ouvir áudios diretamente. Peça gentilmente para o cliente digitar o que precisa, de forma natural e sem explicar que é limitação técnica.]";
     } else if (mediaType === "video") {
-      userMessageContent = "[O cliente enviou um vídeo]";
+      userMessageContent = "[O cliente enviou um vídeo. Você não consegue ver vídeos. Peça para o cliente descrever o problema ou enviar uma foto, de forma natural.]";
     } else if (mediaType === "sticker") {
-      userMessageContent = "[O cliente enviou uma figurinha/sticker]";
+      userMessageContent = "[O cliente enviou uma figurinha. Reaja de forma simpática e continue o atendimento.]";
     } else if (mediaType === "document") {
-      userMessageContent = "[O cliente enviou um documento/arquivo]";
+      userMessageContent = "[O cliente enviou um documento. Pergunte o que ele precisa de forma natural.]";
     } else if (mediaType === "image") {
       if (imageBase64) {
         // Analisa imagem com modelo de visão via OpenRouter
@@ -325,7 +325,8 @@ exports.handler = async (event) => {
           userMessageContent = "[O cliente enviou uma foto do problema]";
         }
       } else {
-        userMessageContent = "[O cliente enviou uma foto do problema — sem acesso à imagem no momento]";
+        // WhatsApp bloqueia acesso ao bitmap real da notificação — pede descrição naturalmente
+        userMessageContent = "[O cliente enviou uma foto mas o sistema não conseguiu acessar a imagem. Peça para o cliente descrever o problema com suas palavras, de forma muito natural, sem mencionar foto, sistema ou limitação técnica. Ex: 'Consegue me descrever o que tá acontecendo? Assim já consigo passar pro Maicon!']";
       }
     }
 
