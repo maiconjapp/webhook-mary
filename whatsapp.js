@@ -129,9 +129,12 @@ async function startWhatsApp() {
         if (msg.key.fromMe && msg.key.remoteJid && !msg.key.remoteJid.endsWith("@g.us")) {
           const msgAge = Date.now() - ((msg.messageTimestamp || 0) * 1000);
           const graceExpired = connectedAt && (Date.now() - connectedAt > SYNC_GRACE_MS);
-          // Só marca como humano se mensagem é de menos de 2 minutos atrás
-          // e já passou o período de graça de sync
-          if (graceExpired && msgAge < 120000) {
+          // Só marca como humano SE:
+          // 1. Passou o período de graça de sync (45s)
+          // 2. Mensagem é recente (< 90s) — não é histórico
+          // 3. A mensagem tem conteúdo de texto real (não é receipt/status)
+          const hasText = !!(msg.message?.conversation || msg.message?.extendedTextMessage?.text || msg.message?.imageMessage || msg.message?.audioMessage);
+          if (graceExpired && msgAge < 90000 && hasText) {
             const contact = msg.key.remoteJid.replace("@s.whatsapp.net", "");
             markHumanHandled(contact);
           }
