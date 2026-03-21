@@ -110,19 +110,31 @@ async function startWhatsApp() {
       } else if (connection === "open") {
         isConnected = true;
         qrCodeDataURL = null;
-        console.log("[WhatsApp] ✅ Conectado e pronto!");
+        connectedAt = Date.now();
+        console.log("[WhatsApp] ✅ Conectado e pronto! Período de graça de 45s para sync...");
+        setTimeout(() => console.log("[WhatsApp] ✅ Pronto para receber mensagens!"), SYNC_GRACE_MS);
       }
     });
+
+    // Período de graça após conexão — ignora sync histórico por 45s
+    let connectedAt = null;
+    const SYNC_GRACE_MS = 45000;
 
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
       if (type !== "notify") return;
       for (const msg of messages) {
-        // Detecta quando o PRÓPRIO DONO do WhatsApp respondeu manualmente
-        // (msg.key.fromMe = true E não veio via Baileys automático)
+        // Detecta quando o PRÓPRIO DONO respondeu manualmente
+        // Mas só conta se: (1) a mensagem é recente (não sync histórico)
+        // e (2) já passou o período de graça após conexão
         if (msg.key.fromMe && msg.key.remoteJid && !msg.key.remoteJid.endsWith("@g.us")) {
-          const contact = msg.key.remoteJid.replace("@s.whatsapp.net", "");
-          // Se o dono enviou mensagem para um cliente, Mary fica em silêncio nessa conversa
-          markHumanHandled(contact);
+          const msgAge = Date.now() - ((msg.messageTimestamp || 0) * 1000);
+          const graceExpired = connectedAt && (Date.now() - connectedAt > SYNC_GRACE_MS);
+          // Só marca como humano se mensagem é de menos de 2 minutos atrás
+          // e já passou o período de graça de sync
+          if (graceExpired && msgAge < 120000) {
+            const contact = msg.key.remoteJid.replace("@s.whatsapp.net", "");
+            markHumanHandled(contact);
+          }
           continue;
         }
         handleMessage(msg, { downloadContentFromMessage }).catch((e) =>
