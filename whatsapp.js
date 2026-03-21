@@ -123,23 +123,24 @@ async function startWhatsApp() {
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
       if (type !== "notify") return;
       for (const msg of messages) {
-        // Detecta quando o PRÓPRIO DONO respondeu manualmente
-        // Mas só conta se: (1) a mensagem é recente (não sync histórico)
-        // e (2) já passou o período de graça após conexão
-        if (msg.key.fromMe && msg.key.remoteJid && !msg.key.remoteJid.endsWith("@g.us")) {
+        const jid = msg.key.remoteJid || "";
+
+        // Só processa mensagens diretas de números reais (ignora grupos, @lid, status)
+        if (!jid.endsWith("@s.whatsapp.net")) continue;
+
+        // Detecta quando o DONO respondeu manualmente para um cliente
+        if (msg.key.fromMe) {
           const msgAge = Date.now() - ((msg.messageTimestamp || 0) * 1000);
           const graceExpired = connectedAt && (Date.now() - connectedAt > SYNC_GRACE_MS);
-          // Só marca como humano SE:
-          // 1. Passou o período de graça de sync (45s)
-          // 2. Mensagem é recente (< 90s) — não é histórico
-          // 3. A mensagem tem conteúdo de texto real (não é receipt/status)
           const hasText = !!(msg.message?.conversation || msg.message?.extendedTextMessage?.text || msg.message?.imageMessage || msg.message?.audioMessage);
           if (graceExpired && msgAge < 90000 && hasText) {
-            const contact = msg.key.remoteJid.replace("@s.whatsapp.net", "");
+            const contact = jid.replace("@s.whatsapp.net", "");
             markHumanHandled(contact);
           }
           continue;
         }
+
+        // Mensagem recebida de cliente — processa
         handleMessage(msg, { downloadContentFromMessage }).catch((e) =>
           console.error("[WhatsApp] Erro ao processar msg:", e.message)
         );
