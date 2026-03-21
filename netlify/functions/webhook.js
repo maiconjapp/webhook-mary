@@ -273,7 +273,7 @@ exports.handler = async (event) => {
     const todayISO = new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
 
     // Carrega memória do cliente
-    const memoryContext = getMemoryContext(contact);
+    const memoryContext = await getMemoryContext(contact);
     const memorySection = memoryContext
       ? `\n\n## MEMÓRIA DESTE CLIENTE\nVocê já atendeu este cliente antes. Use essas informações naturalmente — não liste tudo de uma vez, apenas use quando relevante. Nunca pergunte algo que já está na memória.\n${memoryContext}`
       : "";

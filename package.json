@@ -7,8 +7,9 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "groq-sdk": "^0.7.0",
     "googleapis": "^144.0.0",
-    "openai": "^4.0.0"
+    "groq-sdk": "^0.7.0",
+    "openai": "^4.0.0",
+    "pg": "^8.20.0"
   }
 }

@@ -14,10 +14,14 @@ const server = http.createServer(async (req, res) => {
 
   // Rota de admin: ver memória de todos os clientes
   if (req.method === "GET" && req.url === "/memoria") {
-    const mem = getAllMemory();
-    const total = Object.keys(mem).length;
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ total_clientes: total, clientes: mem }, null, 2));
+    try {
+      const result = await getAllMemory();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(result, null, 2));
+    } catch (err) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: err.message }));
+    }
     return;
   }
 
