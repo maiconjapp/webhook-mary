@@ -569,34 +569,31 @@ ${conversationSample}
 
 Retorne só o JSON, sem texto antes ou depois.`;
 
-        const extractRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${OPENROUTER_KEY}`,
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://webhook-mary.netlify.app",
-            "X-Title": "Mary Memory Extractor",
-          },
-          body: JSON.stringify({
-            model: "meta-llama/llama-3.1-8b-instruct:free",
-            messages: [{ role: "user", content: extractPrompt }],
-            max_tokens: 300,
-            temperature: 0.1,
-          }),
+        // Usa Groq (rápido e confiável) para extração de memória
+        const groqExtract = await getGroq().chat.completions.create({
+          model: "llama-3.1-8b-instant",
+          messages: [{ role: "user", content: extractPrompt }],
+          max_tokens: 300,
+          temperature: 0.1,
         });
 
-        if (extractRes.ok) {
-          const extractData = await extractRes.json();
-          const raw = extractData.choices?.[0]?.message?.content?.trim();
-          if (raw) {
-            // Extrai JSON mesmo que venha com texto ao redor
-            const jsonMatch = raw.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-              const extracted = JSON.parse(jsonMatch[0]);
-              if (Object.keys(extracted).length > 0) {
-                updateMemory(contact, extracted);
-                console.log(`[Memory] Salvo para "${contact}":`, JSON.stringify(extracted));
+        const raw = groqExtract.choices?.[0]?.message?.content?.trim();
+        console.log(`[Memory] Resposta extração: ${raw?.substring(0, 100)}`);
+        if (raw) {
+          const jsonMatch = raw.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            const extracted = JSON.parse(jsonMatch[0]);
+            // Remove campos vazios ou arrays vazios
+            Object.keys(extracted).forEach(k => {
+              if (!extracted[k] || (Array.isArray(extracted[k]) && extracted[k].length === 0)) {
+                delete extracted[k];
               }
+            });
+            if (Object.keys(extracted).length > 0) {
+              updateMemory(contact, extracted);
+              console.log(`[Memory] ✅ Salvo para "${contact}":`, JSON.stringify(extracted));
+            } else {
+              console.log(`[Memory] Nenhum dado novo para "${contact}"`);
             }
           }
         }
