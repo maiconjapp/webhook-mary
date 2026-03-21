@@ -1,57 +1,170 @@
 const http = require("http");
 const { handler } = require("./netlify/functions/webhook");
-const { getAllMemory } = require("./memory");
-const { startWhatsApp, getQR, getStatus } = require("./whatsapp");
+const { getAllMemory, getAllClientsForDashboard, getDashboardStats } = require("./memory");
+const { startWhatsApp, getQR, getStatus, getSock } = require("./whatsapp");
+const { sendFollowUpBatch, isBatchInProgress } = require("./followup");
+const { getDashboardHTML } = require("./dashboard");
 
 const PORT = process.env.PORT || 3000;
+const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || null;
+
+// ── Auth simples para dashboard ───────────────────────────────────────────────
+function checkAuth(req, res) {
+  if (!DASHBOARD_TOKEN) return true; // sem token definido = aberto
+  const url = new URL(req.url, "http://localhost");
+  const token = url.searchParams.get("token") || req.headers["x-dashboard-token"];
+  if (token !== DASHBOARD_TOKEN) {
+    res.writeHead(401, { "Content-Type": "text/plain" });
+    res.end("Unauthorized — adicione ?token=SEU_TOKEN na URL");
+    return false;
+  }
+  return true;
+}
 
 // ── Servidor HTTP ─────────────────────────────────────────────────────────────
-
 const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, "http://localhost");
+  const path = url.pathname;
 
-  // Status do servidor
-  if (req.method === "GET" && req.url === "/") {
-    const whatsappStatus = getStatus() ? "✅ conectado" : (getQR() ? "📱 aguardando QR scan" : "❌ desconectado");
+  // ── Status público ──────────────────────────────────────────────────────────
+  if (req.method === "GET" && path === "/") {
+    const waStatus = getStatus() ? "✅ conectado" : getQR() ? "📱 aguardando QR" : "❌ desconectado";
     res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-    res.end(`Mary webhook online 🤖\nWhatsApp: ${whatsappStatus}`);
+    res.end(`Mary webhook online 🤖\nWhatsApp: ${waStatus}`);
     return;
   }
 
-  // QR code — escanear com o WhatsApp para vincular
-  if (req.method === "GET" && req.url === "/qr") {
+  // ── Dashboard ───────────────────────────────────────────────────────────────
+  if (req.method === "GET" && path === "/dashboard") {
+    if (!checkAuth(req, res)) return;
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(getDashboardHTML());
+    return;
+  }
+
+  // ── API: Status WhatsApp + stats ────────────────────────────────────────────
+  if (req.method === "GET" && path === "/api/status") {
+    if (!checkAuth(req, res)) return;
+    try {
+      const stats = await getDashboardStats();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({
+        connected: getStatus(),
+        qr: getQR(),
+        batch_in_progress: isBatchInProgress(),
+        stats: {
+          total_clients: stats.total,
+          active_last_30d: stats.active_30d,
+          followups_sent_today: stats.sent_today,
+        },
+      }));
+    } catch (e) {
+      res.writeHead(500); res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  // ── API: Lista de clientes ──────────────────────────────────────────────────
+  if (req.method === "GET" && path === "/api/clients") {
+    if (!checkAuth(req, res)) return;
+    try {
+      const clients = await getAllClientsForDashboard();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(clients));
+    } catch (e) {
+      res.writeHead(500); res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  // ── API: Enviar follow-up (streaming) ───────────────────────────────────────
+  if (req.method === "POST" && path === "/api/followup") {
+    if (!checkAuth(req, res)) return;
+
+    let rawBody = "";
+    req.on("data", (c) => (rawBody += c));
+    req.on("end", async () => {
+      try {
+        const { contacts, template } = JSON.parse(rawBody);
+
+        if (!Array.isArray(contacts) || contacts.length === 0) {
+          res.writeHead(400); res.end(JSON.stringify({ error: "Nenhum contato selecionado" })); return;
+        }
+        if (contacts.length > 5) {
+          res.writeHead(400); res.end(JSON.stringify({ error: "Máximo 5 contatos por lote" })); return;
+        }
+        if (!getStatus()) {
+          res.writeHead(503); res.end(JSON.stringify({ error: "WhatsApp não conectado. Escaneie o QR em /qr" })); return;
+        }
+        if (isBatchInProgress()) {
+          res.writeHead(409); res.end(JSON.stringify({ error: "Já existe um lote em andamento" })); return;
+        }
+
+        // Resposta em streaming — cada linha é um JSON
+        res.writeHead(200, {
+          "Content-Type": "application/x-ndjson",
+          "Transfer-Encoding": "chunked",
+          "Cache-Control": "no-cache",
+        });
+
+        let sent = 0, failed = 0;
+
+        const results = await sendFollowUpBatch(
+          contacts,
+          template,
+          getSock,
+          (progress) => {
+            res.write(JSON.stringify(progress) + "\n");
+            if (progress.status === "sent") sent++;
+            if (progress.status === "failed") failed++;
+          }
+        );
+
+        res.write(JSON.stringify({ done: true, sent, failed }) + "\n");
+        res.end();
+      } catch (e) {
+        if (!res.headersSent) {
+          res.writeHead(500); res.end(JSON.stringify({ error: e.message }));
+        } else {
+          res.write(JSON.stringify({ done: true, error: e.message, sent: 0, failed: 0 }) + "\n");
+          res.end();
+        }
+      }
+    });
+    return;
+  }
+
+  // ── QR code page ────────────────────────────────────────────────────────────
+  if (req.method === "GET" && path === "/qr") {
     const qr = getQR();
     if (getStatus()) {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:40px">
-        <h2>✅ WhatsApp já está conectado!</h2>
-        <p>Mary está online e recebendo mensagens.</p>
+      res.end(`<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#111b21;color:#e9edef">
+        <h2>✅ WhatsApp já conectado!</h2><p>Mary está online.</p>
+        <a href="/dashboard" style="color:#25d366">→ Abrir Dashboard</a>
       </body></html>`);
     } else if (qr) {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(`<!DOCTYPE html><html><head>
-        <meta http-equiv="refresh" content="30">
-        <title>Mary — Vincular WhatsApp</title>
-      </head><body style="font-family:sans-serif;text-align:center;padding:40px;background:#f9f9f9">
-        <h2>📱 Vincule o WhatsApp da Mary</h2>
-        <p>Abra o WhatsApp → Dispositivos vinculados → Vincular dispositivo → escaneie:</p>
-        <img src="${qr}" style="border:4px solid #25D366;border-radius:12px;padding:8px;background:white" />
-        <p style="color:#888;font-size:13px">Página atualiza automaticamente a cada 30s</p>
+      res.end(`<!DOCTYPE html><html><head><meta http-equiv="refresh" content="30"><title>Mary — QR</title></head>
+      <body style="font-family:sans-serif;text-align:center;padding:40px;background:#111b21;color:#e9edef">
+        <h2>📱 Vincule o WhatsApp</h2>
+        <p style="color:#8696a0">WhatsApp → Dispositivos vinculados → Vincular dispositivo</p>
+        <img src="${qr}" style="border:4px solid #25d366;border-radius:10px;padding:8px;background:white;max-width:260px"/>
+        <p style="color:#8696a0;font-size:13px">Atualiza a cada 30s</p>
       </body></html>`);
     } else {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(`<!DOCTYPE html><html><head>
-        <meta http-equiv="refresh" content="5">
-        <title>Mary — Aguardando...</title>
-      </head><body style="font-family:sans-serif;text-align:center;padding:40px">
-        <h2>⏳ Gerando QR code...</h2>
-        <p>Aguarde alguns segundos e recarregue a página.</p>
+      res.end(`<!DOCTYPE html><html><head><meta http-equiv="refresh" content="5"></head>
+      <body style="font-family:sans-serif;text-align:center;padding:40px;background:#111b21;color:#e9edef">
+        <h2>⏳ Gerando QR...</h2><p>Aguarde e recarregue.</p>
       </body></html>`);
     }
     return;
   }
 
-  // Reinicia sessão WhatsApp (desvincula e gera novo QR)
-  if (req.method === "POST" && req.url === "/qr/reset") {
+  // ── Reset sessão WhatsApp ───────────────────────────────────────────────────
+  if (req.method === "POST" && path === "/qr/reset") {
+    if (!checkAuth(req, res)) return;
     try {
       const { Pool } = require("pg");
       if (process.env.DATABASE_URL) {
@@ -61,63 +174,53 @@ const server = http.createServer(async (req, res) => {
       }
       setTimeout(() => startWhatsApp(), 1000);
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: true, msg: "Sessão reiniciada — acesse /qr em 10s" }));
+      res.end(JSON.stringify({ ok: true, msg: "Sessão reiniciada" }));
     } catch (e) {
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: e.message }));
+      res.writeHead(500); res.end(JSON.stringify({ error: e.message }));
     }
     return;
   }
 
-  // Memória dos clientes
-  if (req.method === "GET" && req.url === "/memoria") {
+  // ── Memória (legado) ────────────────────────────────────────────────────────
+  if (req.method === "GET" && path === "/memoria") {
     try {
       const result = await getAllMemory();
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(result, null, 2));
-    } catch (err) {
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: err.message }));
+    } catch (e) {
+      res.writeHead(500); res.end(JSON.stringify({ error: e.message }));
     }
     return;
   }
 
-  // Webhook HTTP (usado pelo Android como backup)
-  if (req.method !== "POST" || req.url !== "/webhook") {
-    res.writeHead(404, { "Content-Type": "text/plain" });
-    res.end("Not Found");
+  // ── Webhook HTTP (Android app como backup) ──────────────────────────────────
+  if (req.method === "POST" && path === "/webhook") {
+    let rawBody = "";
+    req.on("data", (c) => (rawBody += c));
+    req.on("end", async () => {
+      try {
+        const result = await handler({
+          httpMethod: req.method,
+          headers: req.headers,
+          body: rawBody,
+        });
+        res.writeHead(result.statusCode, result.headers || { "Content-Type": "application/json" });
+        res.end(result.body);
+      } catch (e) {
+        res.writeHead(500); res.end(JSON.stringify({ error: "Internal server error" }));
+      }
+    });
     return;
   }
 
-  let rawBody = "";
-  req.on("data", (chunk) => (rawBody += chunk));
-  req.on("end", async () => {
-    try {
-      const event = {
-        httpMethod: req.method,
-        headers: req.headers,
-        body: rawBody,
-      };
-      const result = await handler(event);
-      res.writeHead(result.statusCode, result.headers || { "Content-Type": "application/json" });
-      res.end(result.body);
-    } catch (err) {
-      console.error("Webhook error:", err);
-      res.writeHead(500, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ error: "Internal server error" }));
-    }
-  });
+  res.writeHead(404); res.end("Not Found");
 });
 
-// ── Sobe servidor + inicia WhatsApp ──────────────────────────────────────────
-
+// ── Start ─────────────────────────────────────────────────────────────────────
 server.listen(PORT, async () => {
-  console.log(`\n🤖 Mary webhook rodando na porta ${PORT}`);
-  console.log(`📱 Para vincular WhatsApp: /qr`);
-  console.log(`🧠 Para ver memória: /memoria\n`);
-
-  // Inicia Baileys em background
-  startWhatsApp().catch((e) => {
-    console.error("[WhatsApp] Falha na inicialização:", e.message);
-  });
+  console.log(`\n🤖 Mary webhook na porta ${PORT}`);
+  console.log(`📊 Dashboard: /dashboard`);
+  console.log(`📱 QR code:   /qr`);
+  console.log(`🧠 Memória:   /memoria\n`);
+  startWhatsApp().catch((e) => console.error("[WhatsApp] Falha:", e.message));
 });

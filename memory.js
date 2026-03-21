@@ -25,16 +25,23 @@ async function initDb() {
     // Cria tabela se não existir
     await pool.query(`
       CREATE TABLE IF NOT EXISTS client_memory (
-        contact     TEXT PRIMARY KEY,
-        nome        TEXT,
-        endereco    TEXT,
-        bairro      TEXT,
-        tipo_imovel TEXT,
-        servicos    TEXT,
-        pref_horario TEXT,
-        observacoes TEXT,
-        updated_at  TIMESTAMPTZ DEFAULT NOW()
+        contact          TEXT PRIMARY KEY,
+        nome             TEXT,
+        endereco         TEXT,
+        bairro           TEXT,
+        tipo_imovel      TEXT,
+        servicos         TEXT,
+        pref_horario     TEXT,
+        observacoes      TEXT,
+        updated_at       TIMESTAMPTZ DEFAULT NOW(),
+        follow_up_sent_at TIMESTAMPTZ
       )
+    `);
+
+    // Migração: adiciona coluna se já existia sem ela
+    await pool.query(`
+      ALTER TABLE client_memory
+        ADD COLUMN IF NOT EXISTS follow_up_sent_at TIMESTAMPTZ
     `);
 
     console.log("[Memory] ✅ PostgreSQL conectado e tabela pronta");
@@ -176,4 +183,83 @@ async function getAllMemory() {
   return { source: "local", total: Object.keys(_local).length, clientes: _local };
 }
 
-module.exports = { getMemory, updateMemory, getMemoryContext, getAllMemory };
+// ── Dashboard / CRM queries ───────────────────────────────────────────────────
+
+async function getAllClientsForDashboard() {
+  if (useDb && pool) {
+    try {
+      const { rows } = await pool.query(`
+        SELECT
+          contact,
+          nome,
+          endereco,
+          bairro,
+          tipo_imovel,
+          servicos,
+          pref_horario,
+          observacoes,
+          updated_at,
+          follow_up_sent_at,
+          ROUND(EXTRACT(EPOCH FROM (NOW() - updated_at)) / 86400)::int AS days_since_contact,
+          CASE WHEN follow_up_sent_at IS NOT NULL
+            THEN ROUND(EXTRACT(EPOCH FROM (NOW() - follow_up_sent_at)) / 86400)::int
+            ELSE NULL
+          END AS days_since_followup
+        FROM client_memory
+        ORDER BY updated_at DESC
+      `);
+      return rows.map(r => ({
+        contact: r.contact,
+        nome: r.nome,
+        endereco: r.endereco,
+        bairro: r.bairro,
+        tipo_imovel: r.tipo_imovel,
+        servicos: r.servicos ? JSON.parse(r.servicos) : [],
+        pref_horario: r.pref_horario,
+        observacoes: r.observacoes,
+        updated_at: r.updated_at,
+        follow_up_sent_at: r.follow_up_sent_at,
+        days_since_contact: r.days_since_contact,
+        days_since_followup: r.days_since_followup,
+      }));
+    } catch (e) {
+      console.warn("[Memory] Erro ao listar clientes dashboard:", e.message);
+      return [];
+    }
+  }
+  return Object.entries(_local).map(([contact, m]) => ({ contact, ...m, days_since_contact: null, days_since_followup: null }));
+}
+
+async function markFollowUpSent(contact) {
+  if (useDb && pool) {
+    try {
+      await pool.query(
+        "UPDATE client_memory SET follow_up_sent_at = NOW() WHERE contact = $1",
+        [contact]
+      );
+    } catch (e) {
+      console.warn("[Memory] Erro ao marcar follow-up:", e.message);
+    }
+  }
+}
+
+async function getDashboardStats() {
+  if (useDb && pool) {
+    try {
+      const { rows } = await pool.query(`
+        SELECT
+          COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE updated_at > NOW() - INTERVAL '30 days')::int AS active_30d,
+          COUNT(*) FILTER (WHERE follow_up_sent_at::date = CURRENT_DATE)::int AS sent_today
+        FROM client_memory
+      `);
+      return rows[0];
+    } catch (e) {
+      return { total: 0, active_30d: 0, sent_today: 0 };
+    }
+  }
+  const total = Object.keys(_local).length;
+  return { total, active_30d: 0, sent_today: 0 };
+}
+
+module.exports = { getMemory, updateMemory, getMemoryContext, getAllMemory, getAllClientsForDashboard, markFollowUpSent, getDashboardStats };

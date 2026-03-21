@@ -17,8 +17,38 @@ let qrCodeDataURL = null;
 let isConnected = false;
 let reconnectTimer = null;
 
+// ── Controles de comportamento ────────────────────────────────────────────────
+
+// Números bloqueados (não responde nunca) — carregado da env BLOCKED_NUMBERS
+// Formato: "5524999999999,5521888888888" (só os dígitos, sem @s.whatsapp.net)
+function getBlockedNumbers() {
+  const raw = process.env.BLOCKED_NUMBERS || "";
+  return new Set(raw.split(",").map(n => n.trim()).filter(Boolean));
+}
+
+// Conversas onde um humano respondeu recentemente — Mary fica em silêncio
+// Map<contact, timestamp_ultimo_reply_humano>
+const humanHandledUntil = new Map();
+const HUMAN_SILENCE_MS = 60 * 60 * 1000; // 1 hora de silêncio após humano responder
+
+function markHumanHandled(contact) {
+  humanHandledUntil.set(contact, Date.now());
+  console.log(`[WhatsApp] 🙋 Humano assumiu conversa de "${contact}" — Mary em silêncio por 1h`);
+}
+
+function isHumanHandling(contact) {
+  if (!humanHandledUntil.has(contact)) return false;
+  const since = humanHandledUntil.get(contact);
+  if (Date.now() - since > HUMAN_SILENCE_MS) {
+    humanHandledUntil.delete(contact);
+    return false;
+  }
+  return true;
+}
+
 function getStatus() { return isConnected; }
 function getQR() { return qrCodeDataURL; }
+function getHumanHandled() { return humanHandledUntil; }
 
 // ── Inicialização ─────────────────────────────────────────────────────────────
 
@@ -91,6 +121,14 @@ async function startWhatsApp() {
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
       if (type !== "notify") return;
       for (const msg of messages) {
+        // Detecta quando o PRÓPRIO DONO do WhatsApp respondeu manualmente
+        // (msg.key.fromMe = true E não veio via Baileys automático)
+        if (msg.key.fromMe && msg.key.remoteJid && !msg.key.remoteJid.endsWith("@g.us")) {
+          const contact = msg.key.remoteJid.replace("@s.whatsapp.net", "");
+          // Se o dono enviou mensagem para um cliente, Mary fica em silêncio nessa conversa
+          markHumanHandled(contact);
+          continue;
+        }
         handleMessage(msg, { downloadContentFromMessage }).catch((e) =>
           console.error("[WhatsApp] Erro ao processar msg:", e.message)
         );
@@ -106,13 +144,27 @@ async function startWhatsApp() {
 // ── Processamento de mensagem ──────────────────────────────────────────────────
 
 async function handleMessage(msg, { downloadContentFromMessage }) {
-  // Só mensagens recebidas (não enviadas)
+  // Só mensagens recebidas (não enviadas pelo dono)
   if (msg.key.fromMe) return;
 
   const jid = msg.key.remoteJid;
 
-  // Ignora grupos e broadcasts
+  // ── Sempre ignora grupos e broadcasts ────────────────────────────────────────
   if (!jid || jid.endsWith("@g.us") || jid === "status@broadcast") return;
+
+  const contact = jid.replace("@s.whatsapp.net", "");
+
+  // ── Verifica números bloqueados ───────────────────────────────────────────────
+  if (getBlockedNumbers().has(contact)) {
+    console.log(`[WhatsApp] 🚫 Número bloqueado: ${contact}`);
+    return;
+  }
+
+  // ── Verifica se humano está gerenciando essa conversa ─────────────────────────
+  if (isHumanHandling(contact)) {
+    console.log(`[WhatsApp] 🙋 Humano gerenciando "${contact}" — Mary ignorando`);
+    return;
+  }
 
   const messageContent = msg.message;
   if (!messageContent) return;
@@ -192,7 +244,6 @@ async function handleMessage(msg, { downloadContentFromMessage }) {
 
   if (!text.trim()) return;
 
-  const contact = jid.replace("@s.whatsapp.net", "");
   const senderName = msg.pushName || contact;
 
   console.log(`[WhatsApp] 📩 ${senderName}: "${text.substring(0, 60)}"`);
@@ -267,4 +318,15 @@ async function clearAuthState() {
   }
 }
 
-module.exports = { startWhatsApp, getQR, getStatus };
+function getSock() { return sock; }
+
+// Permite que o dashboard mostre/gerencie conversas humanas e números bloqueados
+function getHumanHandledList() {
+  const result = {};
+  for (const [contact, ts] of humanHandledUntil) {
+    result[contact] = { since: new Date(ts).toISOString(), until: new Date(ts + HUMAN_SILENCE_MS).toISOString() };
+  }
+  return result;
+}
+
+module.exports = { startWhatsApp, getQR, getStatus, getSock, markHumanHandled, getHumanHandledList };
