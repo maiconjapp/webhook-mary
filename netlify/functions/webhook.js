@@ -456,6 +456,75 @@ exports.handler = async (event) => {
       throw new Error("Reply vazia após limpeza");
     }
 
+    // ── AGENTE REVISOR (seletivo) ──────────────────────────────────────────────
+    // Só ativa quando a resposta contém palavras de risco — evita atraso desnecessário
+    const RISK_WORDS = [
+      "r$", "reais", "custa", "valor", "preço", "orçamento",
+      "rua", "avenida", "av.", "número", "bairro", "endereço",
+      "agendado", "confirmado", "marcado", "visita",
+      "pintamos", "pintura", "ar condicionado", "pedreiro", "alvenaria",
+      "assistente", "inteligência artificial", "ia ", "robô", "bot",
+    ];
+    const replyLower = reply.toLowerCase();
+    const needsReview = RISK_WORDS.some(w => replyLower.includes(w));
+
+    if (needsReview) {
+      try {
+        const reviewPrompt = `Você é um revisor de qualidade das mensagens da Mary, atendente do Marido de Aluguel Petrópolis.
+
+Analise a resposta abaixo e corrija APENAS se houver algum desses problemas:
+1. Inventou ou confirmou preço sem o cliente ter perguntado (NUNCA invente valores)
+2. Confirmou um endereço que não aparece exatamente assim na conversa
+3. Disse que faz serviços proibidos: pintura, ar-condicionado, pedreiro, alvenaria
+4. Revelou que é IA, robô, assistente virtual ou similar
+5. Usou lista com marcadores (-, •, *) — reescreva em texto corrido natural
+6. Resposta muito longa (mais de 6 linhas) — resuma mantendo o essencial
+
+Se não houver nenhum desses problemas, retorne a resposta EXATAMENTE igual, sem alterar nada.
+Retorne APENAS o texto da resposta, sem comentários, sem explicações.
+
+Conversa recente:
+${messages.slice(-4).filter(m => m.role !== "tool").map(m => `${m.role === "user" ? "Cliente" : "Mary"}: ${typeof m.content === "string" ? m.content : ""}`).join("\n")}
+
+Resposta da Mary para revisar:
+${reply}`;
+
+        const reviewRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${OPENROUTER_KEY}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://webhook-mary.netlify.app",
+            "X-Title": "Mary Revisor",
+          },
+          body: JSON.stringify({
+            model: "meta-llama/llama-3.1-8b-instruct:free",
+            messages: [{ role: "user", content: reviewPrompt }],
+            max_tokens: 400,
+            temperature: 0.2,
+          }),
+        });
+
+        if (reviewRes.ok) {
+          const reviewData = await reviewRes.json();
+          const reviewed = reviewData.choices?.[0]?.message?.content?.trim();
+          if (reviewed && reviewed.length > 10) {
+            if (reviewed !== reply) {
+              console.log(`[Revisor] Correção aplicada:\nAntes: ${reply}\nDepois: ${reviewed}`);
+            } else {
+              console.log(`[Revisor] Resposta aprovada sem alterações`);
+            }
+            reply = reviewed;
+          }
+        } else {
+          console.warn(`[Revisor] Falhou (${reviewRes.status}) — usando resposta original`);
+        }
+      } catch (e) {
+        console.warn(`[Revisor] Erro: ${e.message} — usando resposta original`);
+      }
+    }
+    // ── FIM DO REVISOR ─────────────────────────────────────────────────────────
+
     console.log(`[${platform}] ${contact}: ${message}`);
     console.log(`[Mary]: ${reply}`);
 
