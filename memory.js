@@ -44,6 +44,15 @@ async function initDb() {
         ADD COLUMN IF NOT EXISTS follow_up_sent_at TIMESTAMPTZ
     `);
 
+    // Tabela de números bloqueados
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS blocked_numbers (
+        contact    TEXT PRIMARY KEY,
+        label      TEXT,
+        blocked_at TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+
     console.log("[Memory] ✅ PostgreSQL conectado e tabela pronta");
     return true;
   } catch (e) {
@@ -262,4 +271,53 @@ async function getDashboardStats() {
   return { total, active_30d: 0, sent_today: 0 };
 }
 
-module.exports = { getMemory, updateMemory, getMemoryContext, getAllMemory, getAllClientsForDashboard, markFollowUpSent, getDashboardStats };
+// ── Números bloqueados ────────────────────────────────────────────────────────
+
+async function getBlockedNumbers() {
+  if (useDb && pool) {
+    try {
+      const { rows } = await pool.query(
+        "SELECT contact, label, blocked_at FROM blocked_numbers ORDER BY blocked_at DESC"
+      );
+      return rows;
+    } catch (e) {
+      console.warn("[Memory] Erro ao listar bloqueados:", e.message);
+    }
+  }
+  return [];
+}
+
+async function isBlocked(contact) {
+  if (useDb && pool) {
+    try {
+      const { rows } = await pool.query(
+        "SELECT 1 FROM blocked_numbers WHERE contact = $1",
+        [contact]
+      );
+      return rows.length > 0;
+    } catch { return false; }
+  }
+  return false;
+}
+
+async function blockNumber(contact, label = "") {
+  if (useDb && pool) {
+    await pool.query(
+      `INSERT INTO blocked_numbers (contact, label) VALUES ($1, $2)
+       ON CONFLICT (contact) DO UPDATE SET label = EXCLUDED.label, blocked_at = NOW()`,
+      [contact, label]
+    );
+  }
+}
+
+async function unblockNumber(contact) {
+  if (useDb && pool) {
+    await pool.query("DELETE FROM blocked_numbers WHERE contact = $1", [contact]);
+  }
+}
+
+module.exports = {
+  getMemory, updateMemory, getMemoryContext, getAllMemory,
+  getAllClientsForDashboard, markFollowUpSent, getDashboardStats,
+  getBlockedNumbers, isBlocked, blockNumber, unblockNumber,
+};

@@ -1,9 +1,11 @@
 const http = require("http");
 const { handler } = require("./netlify/functions/webhook");
-const { getAllMemory, getAllClientsForDashboard, getDashboardStats } = require("./memory");
-const { startWhatsApp, getQR, getStatus, getSock } = require("./whatsapp");
+const { getAllMemory, getAllClientsForDashboard, getDashboardStats,
+        getBlockedNumbers, blockNumber, unblockNumber } = require("./memory");
+const { startWhatsApp, getQR, getStatus, getSock, getHumanHandledList } = require("./whatsapp");
 const { sendFollowUpBatch, isBatchInProgress } = require("./followup");
 const { getDashboardHTML } = require("./dashboard");
+const { chatWithAssistant } = require("./assistant");
 
 const PORT = process.env.PORT || 3000;
 const DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN || null;
@@ -52,6 +54,7 @@ const server = http.createServer(async (req, res) => {
         connected: getStatus(),
         qr: getQR(),
         batch_in_progress: isBatchInProgress(),
+        human_handled: getHumanHandledList(),
         stats: {
           total_clients: stats.total,
           active_last_30d: stats.active_30d,
@@ -74,6 +77,64 @@ const server = http.createServer(async (req, res) => {
     } catch (e) {
       res.writeHead(500); res.end(JSON.stringify({ error: e.message }));
     }
+    return;
+  }
+
+  // ── API: Números bloqueados ─────────────────────────────────────────────────
+
+  if (req.method === "GET" && path === "/api/blocked") {
+    if (!checkAuth(req, res)) return;
+    try {
+      const list = await getBlockedNumbers();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(list));
+    } catch (e) { res.writeHead(500); res.end(JSON.stringify({ error: e.message })); }
+    return;
+  }
+
+  if (req.method === "POST" && path === "/api/blocked") {
+    if (!checkAuth(req, res)) return;
+    let raw = ""; req.on("data", c => raw += c);
+    req.on("end", async () => {
+      try {
+        const { contact, label } = JSON.parse(raw);
+        if (!contact) { res.writeHead(400); res.end(JSON.stringify({ error: "contact obrigatório" })); return; }
+        // Normaliza: remove +, espaços, traços
+        const clean = contact.replace(/[\s\+\-\(\)]/g, "");
+        await blockNumber(clean, label || "");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, contact: clean }));
+      } catch (e) { res.writeHead(500); res.end(JSON.stringify({ error: e.message })); }
+    });
+    return;
+  }
+
+  if (req.method === "DELETE" && path.startsWith("/api/blocked/")) {
+    if (!checkAuth(req, res)) return;
+    try {
+      const contact = decodeURIComponent(path.replace("/api/blocked/", ""));
+      await unblockNumber(contact);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (e) { res.writeHead(500); res.end(JSON.stringify({ error: e.message })); }
+    return;
+  }
+
+  // ── API: Chat assistente ────────────────────────────────────────────────────
+
+  if (req.method === "POST" && path === "/api/chat") {
+    if (!checkAuth(req, res)) return;
+    let raw = ""; req.on("data", c => raw += c);
+    req.on("end", async () => {
+      try {
+        const { message, sessionId } = JSON.parse(raw);
+        if (!message) { res.writeHead(400); res.end(JSON.stringify({ error: "message obrigatório" })); return; }
+        const sid = sessionId || `${Date.now()}-${Math.random()}`;
+        const reply = await chatWithAssistant(sid, message);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ reply, sessionId: sid }));
+      } catch (e) { res.writeHead(500); res.end(JSON.stringify({ error: e.message })); }
+    });
     return;
   }
 

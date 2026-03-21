@@ -9,6 +9,7 @@
 const { usePostgresAuthState } = require("./baileys-auth");
 const { transcribeAudio } = require("./audio");
 const { handler } = require("./netlify/functions/webhook");
+const { isBlocked } = require("./memory");
 const qrcode = require("qrcode");
 
 // Estado global
@@ -19,12 +20,7 @@ let reconnectTimer = null;
 
 // ── Controles de comportamento ────────────────────────────────────────────────
 
-// Números bloqueados (não responde nunca) — carregado da env BLOCKED_NUMBERS
-// Formato: "5524999999999,5521888888888" (só os dígitos, sem @s.whatsapp.net)
-function getBlockedNumbers() {
-  const raw = process.env.BLOCKED_NUMBERS || "";
-  return new Set(raw.split(",").map(n => n.trim()).filter(Boolean));
-}
+// Números bloqueados gerenciados no banco (via dashboard)
 
 // Conversas onde um humano respondeu recentemente — Mary fica em silêncio
 // Map<contact, timestamp_ultimo_reply_humano>
@@ -154,8 +150,8 @@ async function handleMessage(msg, { downloadContentFromMessage }) {
 
   const contact = jid.replace("@s.whatsapp.net", "");
 
-  // ── Verifica números bloqueados ───────────────────────────────────────────────
-  if (getBlockedNumbers().has(contact)) {
+  // ── Verifica números bloqueados (banco de dados) ─────────────────────────────
+  if (await isBlocked(contact)) {
     console.log(`[WhatsApp] 🚫 Número bloqueado: ${contact}`);
     return;
   }

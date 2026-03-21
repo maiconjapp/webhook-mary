@@ -113,9 +113,11 @@ tailwind.config = {
 
 <!-- TABS -->
 <div class="px-6 mt-2">
-  <div class="flex gap-1 mb-4" style="border-bottom:1px solid #313d45">
+  <div class="flex gap-1 mb-4 flex-wrap" style="border-bottom:1px solid #313d45">
     <button onclick="showTab('clients')" id="tab-clients" class="py-2 px-4 text-sm font-semibold border-b-2" style="border-color:#25d366;color:#25d366">👥 Clientes</button>
     <button onclick="showTab('followup')" id="tab-followup" class="py-2 px-4 text-sm font-semibold border-b-2 border-transparent" style="color:#8696a0">📣 Follow-up CRM</button>
+    <button onclick="showTab('blocked')" id="tab-blocked" class="py-2 px-4 text-sm font-semibold border-b-2 border-transparent" style="color:#8696a0">🚫 Bloqueados</button>
+    <button onclick="showTab('chat')" id="tab-chat" class="py-2 px-4 text-sm font-semibold border-b-2 border-transparent" style="color:#8696a0">🤖 Assistente</button>
   </div>
 
   <!-- TAB CLIENTES -->
@@ -197,6 +199,57 @@ tailwind.config = {
       <p class="text-xs mt-2" style="color:#8696a0">⏱ Delay de 30–60s entre mensagens para proteção anti-ban. Máximo 5 por lote.</p>
     </div>
   </div>
+
+  <!-- TAB BLOQUEADOS -->
+  <div id="panel-blocked" style="display:none;max-width:600px">
+    <div style="background:#1f2c34;border:1px solid #313d45;border-radius:12px;padding:20px" class="mb-4">
+      <h3 class="font-semibold mb-3">➕ Bloquear número</h3>
+      <div class="flex gap-2">
+        <input type="text" id="block-number" placeholder="5524999999999 (só dígitos)" style="flex:1" />
+        <input type="text" id="block-label" placeholder="Motivo (opcional)" style="flex:1" />
+        <button onclick="addBlocked()" class="btn-green">Bloquear</button>
+      </div>
+      <p class="text-xs mt-2" style="color:#8696a0">Mary não vai mais responder esse número. Pode desbloquear a qualquer momento.</p>
+    </div>
+    <div style="background:#1f2c34;border:1px solid #313d45;border-radius:12px;padding:20px">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-semibold">🚫 Números bloqueados</h3>
+        <button onclick="loadBlocked()" class="btn-outline text-xs">↻ Atualizar</button>
+      </div>
+      <div id="blocked-list">
+        <p style="color:#8696a0;font-size:13px">Carregando...</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB ASSISTENTE -->
+  <div id="panel-chat" style="display:none;max-width:720px">
+    <div style="background:#1f2c34;border:1px solid #313d45;border-radius:12px;overflow:hidden">
+      <div style="background:#1f2c34;border-bottom:1px solid #313d45;padding:14px 20px;display:flex;align-items:center;gap:10px">
+        <div style="background:#25d366;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px">🤖</div>
+        <div>
+          <div class="font-semibold">Assistente Mary</div>
+          <div class="text-xs" style="color:#8696a0">Tire dúvidas sobre o sistema, configurações e atendimento</div>
+        </div>
+      </div>
+      <div id="chat-messages" style="height:380px;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px">
+        <div style="background:#2a3942;border-radius:12px 12px 12px 4px;padding:12px 14px;max-width:85%;font-size:14px;line-height:1.5">
+          Oi! Sou o assistente de administração da Mary. 😊<br><br>
+          Posso te ajudar com dúvidas sobre:<br>
+          • Como configurar a Mary<br>
+          • O que o dashboard faz<br>
+          • Dicas de follow-up e atendimento<br>
+          • Como melhorar as respostas dela<br><br>
+          O que você precisa?
+        </div>
+      </div>
+      <div style="border-top:1px solid #313d45;padding:12px 16px;display:flex;gap-10px;gap:8px">
+        <input type="text" id="chat-input" placeholder="Digite sua mensagem..." style="flex:1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}" />
+        <button onclick="sendChat()" class="btn-green" id="chat-send-btn">Enviar</button>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <div class="h-16"></div>
@@ -213,16 +266,18 @@ const HEADERS = TOKEN ? {'x-dashboard-token': TOKEN} : {};
 const DEFAULT_TPL = \`${DEFAULT_TEMPLATE.replace(/\\/g, '\\\\').replace(/`/g, '\\`')}\`;
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
+const TABS = ['clients','followup','blocked','chat'];
 function showTab(tab) {
-  document.getElementById('panel-clients').style.display = tab === 'clients' ? '' : 'none';
-  document.getElementById('panel-followup').style.display = tab === 'followup' ? '' : 'none';
-  document.getElementById('tab-clients').style.cssText = tab === 'clients'
-    ? 'border-color:#25d366;color:#25d366;padding:8px 16px;font-size:14px;font-weight:600;border-bottom:2px solid;background:none;cursor:pointer'
-    : 'border-color:transparent;color:#8696a0;padding:8px 16px;font-size:14px;font-weight:600;border-bottom:2px solid;background:none;cursor:pointer';
-  document.getElementById('tab-followup').style.cssText = tab === 'followup'
-    ? 'border-color:#25d366;color:#25d366;padding:8px 16px;font-size:14px;font-weight:600;border-bottom:2px solid;background:none;cursor:pointer'
-    : 'border-color:transparent;color:#8696a0;padding:8px 16px;font-size:14px;font-weight:600;border-bottom:2px solid;background:none;cursor:pointer';
+  TABS.forEach(t => {
+    const p = document.getElementById('panel-'+t);
+    const b = document.getElementById('tab-'+t);
+    if (p) p.style.display = t === tab ? '' : 'none';
+    if (b) b.style.cssText = t === tab
+      ? 'border-color:#25d366;color:#25d366;padding:8px 16px;font-size:14px;font-weight:600;border-bottom:2px solid;background:none;cursor:pointer'
+      : 'border-color:transparent;color:#8696a0;padding:8px 16px;font-size:14px;font-weight:600;border-bottom:2px solid;background:none;cursor:pointer';
+  });
   if (tab === 'followup') renderFollowUpList();
+  if (tab === 'blocked') loadBlocked();
 }
 
 // ── Status ────────────────────────────────────────────────────────────────────
@@ -475,6 +530,99 @@ async function sendFollowUp() {
     addLog('❌ Erro de rede: ' + e.message, 'failed');
   }
   btn.disabled = false;
+}
+
+// ── Números bloqueados ─────────────────────────────────────────────────────────
+async function loadBlocked() {
+  const el = document.getElementById('blocked-list');
+  try {
+    const r = await fetch(BASE + '/api/blocked', {headers: HEADERS});
+    const list = await r.json();
+    if (!list.length) {
+      el.innerHTML = '<p style="color:#8696a0;font-size:13px">Nenhum número bloqueado.</p>';
+      return;
+    }
+    el.innerHTML = list.map(b => \`
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid #313d45">
+        <div>
+          <span style="font-family:monospace;color:#e9edef">\${b.contact}</span>
+          \${b.label ? \`<span style="color:#8696a0;font-size:12px;margin-left:8px">· \${b.label}</span>\` : ''}
+          <div style="color:#8696a0;font-size:11px">Bloqueado em \${new Date(b.blocked_at).toLocaleDateString('pt-BR')}</div>
+        </div>
+        <button onclick="removeBlocked('\${b.contact}')" style="background:rgba(239,68,68,.15);color:#ef4444;border:1px solid rgba(239,68,68,.3);border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer">Desbloquear</button>
+      </div>
+    \`).join('');
+  } catch(e) {
+    el.innerHTML = '<p style="color:#ef4444;font-size:13px">Erro ao carregar: ' + e.message + '</p>';
+  }
+}
+
+async function addBlocked() {
+  const num = document.getElementById('block-number').value.trim();
+  const label = document.getElementById('block-label').value.trim();
+  if (!num) { alert('Digite o número'); return; }
+  try {
+    const r = await fetch(BASE + '/api/blocked', {
+      method: 'POST', headers: {'Content-Type':'application/json',...HEADERS},
+      body: JSON.stringify({contact: num, label})
+    });
+    const d = await r.json();
+    if (d.ok) {
+      document.getElementById('block-number').value = '';
+      document.getElementById('block-label').value = '';
+      loadBlocked();
+    } else { alert('Erro: ' + d.error); }
+  } catch(e) { alert('Erro: ' + e.message); }
+}
+
+async function removeBlocked(contact) {
+  if (!confirm(\`Desbloquear \${contact}?\`)) return;
+  try {
+    await fetch(BASE + '/api/blocked/' + encodeURIComponent(contact), {method:'DELETE', headers: HEADERS});
+    loadBlocked();
+  } catch(e) { alert('Erro: ' + e.message); }
+}
+
+// ── Chat assistente ────────────────────────────────────────────────────────────
+let chatSessionId = \`\${Date.now()}-\${Math.random().toString(36).slice(2)}\`;
+
+function addChatMsg(text, role) {
+  const msgs = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.style.cssText = role === 'user'
+    ? 'background:#005c4b;border-radius:12px 12px 4px 12px;padding:12px 14px;max-width:85%;align-self:flex-end;font-size:14px;line-height:1.5;white-space:pre-wrap'
+    : 'background:#2a3942;border-radius:12px 12px 12px 4px;padding:12px 14px;max-width:85%;font-size:14px;line-height:1.5;white-space:pre-wrap';
+  div.textContent = text;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+  return div;
+}
+
+async function sendChat() {
+  const input = document.getElementById('chat-input');
+  const btn = document.getElementById('chat-send-btn');
+  const msg = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+  btn.disabled = true;
+  addChatMsg(msg, 'user');
+  const typing = addChatMsg('...', 'assistant');
+  try {
+    const r = await fetch(BASE + '/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json',...HEADERS},
+      body: JSON.stringify({message: msg, sessionId: chatSessionId})
+    });
+    const d = await r.json();
+    if (d.sessionId) chatSessionId = d.sessionId;
+    typing.textContent = d.reply || d.error || 'Sem resposta';
+  } catch(e) {
+    typing.textContent = '❌ Erro: ' + e.message;
+    typing.style.color = '#ef4444';
+  }
+  btn.disabled = false;
+  input.focus();
+  document.getElementById('chat-messages').scrollTop = 99999;
 }
 
 // ── QR Modal ──────────────────────────────────────────────────────────────────
