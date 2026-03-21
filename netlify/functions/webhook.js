@@ -1,7 +1,15 @@
 const Groq = require("groq-sdk");
 const { google } = require("googleapis");
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+// Lazy init — GROQ_API_KEY é opcional (só usado como fallback)
+let _groq = null;
+function getGroq() {
+  if (!_groq) {
+    const key = process.env.GROQ_API_KEY || "not-configured";
+    _groq = new Groq({ apiKey: key });
+  }
+  return _groq;
+}
 
 const OPENROUTER_KEY = process.env.OPENROUTER_KEY || process.env.OPENROUTER_API_KEY || "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";
 
@@ -339,7 +347,7 @@ exports.handler = async (event) => {
 
     // Chama Groq via SDK
     async function callGroqModel(model, msgs) {
-      return groq.chat.completions.create({
+      return getGroq().chat.completions.create({
         model, messages: msgs, tools: TOOLS, tool_choice: "auto",
         max_tokens: 600, temperature: 0.85, frequency_penalty: 0.3,
       });
