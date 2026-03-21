@@ -3,7 +3,7 @@ const { google } = require("googleapis");
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || "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";
+const OPENROUTER_KEY = process.env.OPENROUTER_KEY || process.env.OPENROUTER_API_KEY || "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";
 
 // Chama OpenRouter via fetch nativo (sem SDK)
 async function callOpenRouter(model, messages, tools) {
