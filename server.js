@@ -227,15 +227,11 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && path === "/qr/reset") {
     if (!checkAuth(req, res)) return;
     try {
-      const { Pool } = require("pg");
-      if (process.env.DATABASE_URL) {
-        const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: false });
-        await pool.query("DELETE FROM baileys_auth");
-        await pool.end();
-      }
+      const { clearAuthState } = require("./baileys-auth");
+      await clearAuthState();
       setTimeout(() => startWhatsApp(), 1000);
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: true, msg: "Sessão reiniciada" }));
+      res.end(JSON.stringify({ ok: true, msg: "Sessão reiniciada — acesse /qr em 10s" }));
     } catch (e) {
       res.writeHead(500); res.end(JSON.stringify({ error: e.message }));
     }

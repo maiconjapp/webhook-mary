@@ -317,16 +317,8 @@ function sleep(ms) {
 }
 
 async function clearAuthState() {
-  try {
-    const { Pool } = require("pg");
-    if (!process.env.DATABASE_URL) return;
-    const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: false });
-    await pool.query("DELETE FROM baileys_auth");
-    await pool.end();
-    console.log("[WhatsApp] Sessão limpa do banco");
-  } catch (e) {
-    console.warn("[WhatsApp] Não conseguiu limpar sessão:", e.message);
-  }
+  const { clearAuthState: _clear } = require("./baileys-auth");
+  await _clear();
 }
 
 function getSock() { return sock; }
