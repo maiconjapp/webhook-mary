@@ -540,9 +540,10 @@ ${reply}`;
     console.log(`[${platform}] ${contact}: ${message}`);
     console.log(`[Mary]: ${reply}`);
 
-    // ── EXTRAÇÃO DE MEMÓRIA (async, não bloqueia resposta) ────────────────────
-    // Roda em background após responder — extrai dados novos da conversa
-    setImmediate(async () => {
+    // ── EXTRAÇÃO DE MEMÓRIA ────────────────────────────────────────────────────
+    // Extrai dados do cliente da conversa e salva na memória
+    console.log(`[Memory] Iniciando extração para "${contact}"...`);
+    (async () => {
       try {
         const conversationSample = messages
           .filter(m => m.role === "user" || m.role === "assistant")
@@ -602,8 +603,8 @@ Retorne só o JSON, sem texto antes ou depois.`;
       } catch (e) {
         console.warn("[Memory] Erro na extração:", e.message);
       }
-    });
-    // ── FIM DA EXTRAÇÃO ───────────────────────────────────────────────────────
+    })(); // chama imediatamente (fire-and-forget)
+    // ── FIM DA EXTRAÇÃO ──────────────────────────────────────────────────────
 
     return {
       statusCode: 200,
