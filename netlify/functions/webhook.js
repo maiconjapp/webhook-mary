@@ -214,6 +214,14 @@ const SYSTEM_PROMPT = `Você é a Mary, secretária do *Marido de Aluguel Petró
 5. Se quiser agendar: use as ferramentas de agenda e confirme o horário de forma natural
 6. Quando relevante, compartilhe o Instagram: instagram.com/maridodealuguelpetropolisrj
 
+## REGRAS PARA AGENDAMENTO (muito importante)
+- Para criar um agendamento você PRECISA ter: nome do cliente, endereço COMPLETO e horário
+- Se o cliente ainda não informou o endereço, PERGUNTE antes de criar o agendamento
+- ANTES de criar o agendamento, SEMPRE confirme o endereço repetindo exatamente o que o cliente disse: "Confirma o endereço: [endereço que o cliente falou]?"
+- Só crie o agendamento APÓS o cliente confirmar explicitamente o endereço
+- Use o endereço EXATAMENTE como o cliente escreveu — não altere, não complete, não suponha nada
+- Se o endereço estiver incompleto (sem número, sem bairro), pergunte o restante
+
 ## INFORMAÇÕES DA EMPRESA
 - Pagamento via Pix — CNPJ: 25.349.070/0001-80
 - Orçamentos sempre por WhatsApp com fotos/vídeos (nunca sugira visita para orçamento)
@@ -403,8 +411,10 @@ exports.handler = async (event) => {
           let toolResult;
 
           if (toolCall.function.name === "check_availability") {
+            console.log(`[Tool] check_availability: date=${args.date}`);
             toolResult = await checkAvailability(args.date);
           } else if (toolCall.function.name === "create_appointment") {
+            console.log(`[Tool] create_appointment: ${JSON.stringify(args)}`);
             toolResult = await createAppointment(args);
           } else {
             toolResult = "Ferramenta desconhecida.";
