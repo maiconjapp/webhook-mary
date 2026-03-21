@@ -339,9 +339,11 @@ exports.handler = async (event) => {
 
     function isRateLimit(e) {
       return (
-        e.status === 429 || e.status === 402 ||
+        e.status === 429 || e.status === 402 || e.status === 401 ||
         (e.message && (e.message.includes("429") || e.message.includes("402") ||
-          e.message.includes("rate limit") || e.message.includes("credits") || e.message.includes("insufficient")))
+          e.message.includes("401") || e.message.includes("rate limit") ||
+          e.message.includes("credits") || e.message.includes("insufficient") ||
+          e.message.includes("User not found") || e.message.includes("Unauthorized")))
       );
     }
 
