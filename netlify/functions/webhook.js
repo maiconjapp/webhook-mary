@@ -2,6 +2,21 @@ const Groq = require("groq-sdk");
 const { google } = require("googleapis");
 const { getMemoryContext, updateMemory } = require("../../memory");
 
+// Deduplicação — evita resposta dupla quando Android app E Baileys processam a mesma msg
+const _dedup = new Map();
+function isDuplicate(contact, message) {
+  const key = `${contact}:${String(message).slice(0, 80)}`;
+  const now = Date.now();
+  if (_dedup.has(key) && now - _dedup.get(key) < 25000) return true;
+  _dedup.set(key, now);
+  // Limpa entradas antigas
+  if (_dedup.size > 500) {
+    const cutoff = now - 60000;
+    for (const [k, v] of _dedup) if (v < cutoff) _dedup.delete(k);
+  }
+  return false;
+}
+
 // Lazy init — GROQ_API_KEY é opcional (só usado como fallback)
 let _groq = null;
 function getGroq() {
@@ -266,6 +281,12 @@ exports.handler = async (event) => {
 
   if (!message && !imageBase64) {
     return { statusCode: 400, body: "Missing message" };
+  }
+
+  // Deduplicação: se a mesma msg do mesmo contato chegou nos últimos 25s, ignora
+  if (isDuplicate(contact, message)) {
+    console.log(`[Dedup] Ignorando msg duplicada de "${contact}"`);
+    return { statusCode: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reply: "" }) };
   }
 
   try {
