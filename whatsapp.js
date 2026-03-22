@@ -87,6 +87,13 @@ async function startWhatsApp() {
 
     client = new Client({
       authStrategy: new LocalAuth({ dataPath: "/tmp/wwebjs_auth" }),
+      // Versão travada do WhatsApp Web — evita navegação durante autenticação
+      // que destruía o contexto do Puppeteer ("Execution context was destroyed")
+      webVersion: "2.3000.1015901620",
+      webVersionCache: {
+        type: "remote",
+        remotePath: "https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1015901620.html",
+      },
       puppeteer: {
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium",
         headless: true,
@@ -94,11 +101,10 @@ async function startWhatsApp() {
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",   // usa /tmp em vez de /dev/shm
+          "--disable-dev-shm-usage",
           "--disable-gpu",
           "--no-first-run",
-          "--no-zygote",               // sem processos filho (mais estável em container)
-          // SEM --single-process: esse flag causa crashes durante autenticação QR
+          "--no-zygote",
           "--disable-extensions",
           "--disable-background-networking",
           "--disable-default-apps",
