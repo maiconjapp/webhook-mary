@@ -8,6 +8,7 @@ const qrcode = require("qrcode");
 const { transcribeAudio } = require("./audio");
 const { handler } = require("./netlify/functions/webhook");
 const { isBlocked } = require("./memory");
+const { backupSession, restoreSession, clearSession } = require("./session-store");
 const path = require("path");
 const fs = require("fs");
 
@@ -76,6 +77,9 @@ async function startWhatsApp() {
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
 
   try {
+    // Restaura sessão do PostgreSQL antes de iniciar (sobrevive redeploys)
+    await restoreSession();
+
     const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 
     client = new Client({
@@ -104,16 +108,22 @@ async function startWhatsApp() {
       console.log("[WhatsApp] 📱 QR gerado — acesse /qr para escanear");
     });
 
-    // Autenticado
-    client.on("authenticated", () => {
+    // Autenticado — salva sessão no PostgreSQL imediatamente
+    client.on("authenticated", async () => {
       console.log("[WhatsApp] 🔐 Autenticado!");
+      // Aguarda o whatsapp-web.js gravar os arquivos de sessão no disco
+      setTimeout(() => backupSession(), 5000);
     });
 
-    // Conectado e pronto
+    // Conectado e pronto — faz backup periódico da sessão a cada 30min
     client.on("ready", () => {
       isConnected = true;
       qrCodeDataURL = null;
       console.log("[WhatsApp] ✅ Conectado e pronto!");
+      // Backup periódico a cada 30 minutos (garante sessão atualizada)
+      if (!client._sessionBackupInterval) {
+        client._sessionBackupInterval = setInterval(() => backupSession(), 30 * 60 * 1000);
+      }
     });
 
     // Desconectado
@@ -297,22 +307,19 @@ async function handleMessage(msg, MessageMedia) {
 async function clearAuthState() {
   try {
     if (client) {
+      if (client._sessionBackupInterval) clearInterval(client._sessionBackupInterval);
       await client.destroy().catch(() => {});
       client = null;
     }
     isConnected = false;
 
-    // Limpa arquivos de sessão
+    // Limpa arquivos de sessão locais
     const dir = "/tmp/wwebjs_auth";
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
 
-    // Limpa backup do DB
-    const { Pool } = require("pg");
-    if (process.env.DATABASE_URL) {
-      const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: false });
-      await pool.query("DELETE FROM baileys_files");
-      await pool.end();
-    }
+    // Limpa sessão do PostgreSQL
+    await clearSession();
+
     console.log("[WhatsApp] Sessão limpa");
   } catch (e) {
     console.warn("[WhatsApp] Erro ao limpar sessão:", e.message);
