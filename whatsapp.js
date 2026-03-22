@@ -62,6 +62,7 @@ async function startWhatsApp() {
       puppeteer: {
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium",
         headless: true,
+        protocolTimeout: 120000, // 2 min — evita timeout no downloadMedia
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
@@ -133,8 +134,8 @@ async function handleMessage(msg, MessageMedia) {
   // Ignora mensagens próprias
   if (msg.fromMe) return;
 
-  // Ignora grupos
-  if (msg.from.endsWith("@g.us")) return;
+  // Só processa contatos individuais reais (@c.us) — ignora grupos, sistema, status
+  if (!msg.from.endsWith("@c.us")) return;
 
   const contact = msg.from.replace("@c.us", "");
 
@@ -153,17 +154,25 @@ async function handleMessage(msg, MessageMedia) {
   let text = "";
   let mediaType = "text";
   let imageBase64 = null;
+  let imageMimeType = "image/jpeg";
 
   // ── Tipo de mensagem ────────────────────────────────────────────────────────
   if (msg.hasMedia) {
-    const media = await msg.downloadMedia().catch(() => null);
+    console.log(`[WhatsApp] ⬇️ Baixando mídia tipo="${msg.type}"...`);
+    const media = await msg.downloadMedia().catch((e) => {
+      console.warn(`[WhatsApp] ⚠️ Falha ao baixar mídia: ${e.message}`);
+      return null;
+    });
 
     if (msg.type === "image" || msg.type === "sticker") {
       mediaType = msg.type === "sticker" ? "sticker" : "image";
       text = msg.body || "[Foto]";
       if (media?.data) {
         imageBase64 = media.data; // já é base64 no wwebjs
-        console.log(`[WhatsApp] 📷 Imagem baixada`);
+        imageMimeType = media.mimetype || "image/jpeg";
+        console.log(`[WhatsApp] 📷 Imagem baixada (${Math.round(media.data.length * 0.75 / 1024)}KB, ${imageMimeType})`);
+      } else {
+        console.warn(`[WhatsApp] ⚠️ Imagem sem dados — visão indisponível`);
       }
 
     } else if (msg.type === "ptt" || msg.type === "audio") {
@@ -172,13 +181,17 @@ async function handleMessage(msg, MessageMedia) {
       if (media?.data) {
         const buffer = Buffer.from(media.data, "base64");
         const mime = media.mimetype || "audio/ogg";
-        console.log(`[WhatsApp] 🎤 Áudio baixado (${Math.round(buffer.length / 1024)}KB) — transcrevendo...`);
+        console.log(`[WhatsApp] 🎤 Áudio baixado (${Math.round(buffer.length / 1024)}KB, ${mime}) — transcrevendo...`);
         const transcription = await transcribeAudio(buffer, mime);
         if (transcription) {
           text = `[Áudio transcrito: "${transcription}"]`;
           mediaType = "text";
           console.log(`[WhatsApp] 📝 Transcrição: "${transcription.substring(0, 80)}"`);
+        } else {
+          console.warn(`[WhatsApp] ⚠️ Transcrição retornou vazia`);
         }
+      } else {
+        console.warn(`[WhatsApp] ⚠️ Áudio sem dados — transcrição indisponível`);
       }
 
     } else if (msg.type === "video") {
@@ -219,6 +232,7 @@ async function handleMessage(msg, MessageMedia) {
       message: text,
       mediaType,
       imageBase64,
+      imageMimeType,
       history: [],
     }),
   };

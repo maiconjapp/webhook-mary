@@ -277,7 +277,7 @@ exports.handler = async (event) => {
     return { statusCode: 400, body: "Invalid JSON" };
   }
 
-  const { contact, platform, message, history = [], mediaType = "text", imageBase64 } = body;
+  const { contact, platform, message, history = [], mediaType = "text", imageBase64, imageMimeType = "image/jpeg" } = body;
 
   if (!message && !imageBase64) {
     return { statusCode: 400, body: "Missing message" };
@@ -329,12 +329,12 @@ exports.handler = async (event) => {
               "X-Title": "Mary - Marido de Aluguel Petropolis",
             },
             body: JSON.stringify({
-              model: "meta-llama/llama-3.2-11b-vision-instruct",
+              model: "google/gemini-flash-1.5-8b",
               messages: [{
                 role: "user",
                 content: [
                   { type: "text", text: "Você é um assistente de uma empresa de reparos residenciais. Descreva objetivamente o que vê nesta imagem, focando em: qual ambiente é, qual o problema aparente, qual serviço pode ser necessário. Seja direto e breve (máximo 2 frases)." },
-                  { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } }
+                  { type: "image_url", image_url: { url: `data:${imageMimeType};base64,${imageBase64}` } }
                 ]
               }],
               max_tokens: 150,
