@@ -90,17 +90,22 @@ async function startWhatsApp() {
       puppeteer: {
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium",
         headless: true,
-        protocolTimeout: 120000, // 2 min — evita timeout no downloadMedia
+        protocolTimeout: 120000,
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-accelerated-2d-canvas",
+          "--disable-dev-shm-usage",   // usa /tmp em vez de /dev/shm
           "--disable-gpu",
           "--no-first-run",
-          "--no-zygote",
-          "--single-process",
+          "--no-zygote",               // sem processos filho (mais estável em container)
+          // SEM --single-process: esse flag causa crashes durante autenticação QR
           "--disable-extensions",
+          "--disable-background-networking",
+          "--disable-default-apps",
+          "--disable-sync",
+          "--metrics-recording-only",
+          "--mute-audio",
+          "--hide-scrollbars",
         ],
       },
     });
@@ -158,6 +163,12 @@ async function startWhatsApp() {
 
   } catch (err) {
     console.error("[WhatsApp] Erro ao iniciar:", err.message);
+    // Limpa instância morta antes de reconectar
+    if (client) {
+      try { await client.destroy(); } catch (_) {}
+      client = null;
+    }
+    isConnected = false;
     reconnectTimer = setTimeout(startWhatsApp, 15000);
   }
 }
