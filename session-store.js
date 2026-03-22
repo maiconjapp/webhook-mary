@@ -43,6 +43,14 @@ async function backupSession() {
       return;
     }
 
+    // Remove lock files antes de compactar (evita salvar locks no banco)
+    try {
+      execSync(
+        `find ${SESSION_DIR} -name "SingletonLock" -o -name "SingletonSocket" -o -name "SingletonCookie" | xargs rm -f`,
+        { stdio: "ignore" }
+      );
+    } catch (_) {}
+
     // Cria tar.gz em memória
     const tarPath = "/tmp/wwebjs_session.tar.gz";
     execSync(`tar -czf ${tarPath} -C /tmp wwebjs_auth`, { stdio: "ignore" });
@@ -90,6 +98,15 @@ async function restoreSession() {
     fs.unlinkSync(tarPath);
 
     if (fs.existsSync(SESSION_DIR)) {
+      // Remove lock files do Chromium — impedem o browser de iniciar após restore
+      try {
+        execSync(
+          `find ${SESSION_DIR} -name "SingletonLock" -o -name "SingletonSocket" -o -name "SingletonCookie" | xargs rm -f`,
+          { stdio: "ignore" }
+        );
+        console.log("[Session] Lock files removidos");
+      } catch (_) {}
+
       console.log(`[Session] ✅ Sessão restaurada do PostgreSQL (${Math.round(data.length / 1024)}KB)`);
       return true;
     }
