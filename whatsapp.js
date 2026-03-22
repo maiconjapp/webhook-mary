@@ -17,6 +17,9 @@ let qrCodeDataURL = null;
 let isConnected = false;
 let reconnectTimer = null;
 
+// Dedup por ID de mensagem — evita processar a mesma mensagem duas vezes
+const _processedMsgIds = new Set();
+
 // Conversas onde humano respondeu — Mary fica em silêncio
 const humanHandledUntil = new Map();
 const HUMAN_SILENCE_MS = 60 * 60 * 1000; // 1 hora
@@ -167,6 +170,22 @@ async function handleMessage(msg, MessageMedia) {
 
   // Só processa contatos individuais reais (@c.us) — ignora grupos, sistema, status
   if (!msg.from.endsWith("@c.us")) return;
+
+  // Dedup por ID de mensagem — evita dupla resposta
+  const msgId = msg.id?._serialized || `${msg.from}:${msg.timestamp}`;
+  if (_processedMsgIds.has(msgId)) {
+    console.log(`[WhatsApp] 🔁 Ignorando msg duplicada: ${msgId}`);
+    return;
+  }
+  _processedMsgIds.add(msgId);
+  setTimeout(() => _processedMsgIds.delete(msgId), 120000); // limpa após 2min
+
+  // Ignora mensagens com mais de 2 minutos (replay de histórico na reconexão)
+  const msgAgeMs = Date.now() - (msg.timestamp * 1000);
+  if (msgAgeMs > 120000) {
+    console.log(`[WhatsApp] ⏭️ Mensagem antiga ignorada (${Math.round(msgAgeMs/1000)}s): "${(msg.body||'').substring(0,30)}"`);
+    return;
+  }
 
   const contact = msg.from.replace("@c.us", "");
 

@@ -259,12 +259,24 @@ Dúvidas técnicas: "deixa eu confirmar com o Maicon"
 
 ---
 
-REGRAS FIXAS
+MEMÓRIA DE CLIENTES ANTERIORES
 
-Nunca invente preço.
+Você tem acesso a dados de atendimentos passados deste cliente. Use só para personalizar o atendimento (chamá-lo pelo nome, não perguntar o que já sabe). NUNCA use a memória para:
+- Confirmar agendamento que não foi pedido nesta conversa
+- Assumir que o serviço atual é o mesmo de antes
+- Criar compromisso sem o cliente pedir explicitamente agora
+A memória é contexto, não autorização para agir.
+
+---
+
+REGRAS ABSOLUTAS — NUNCA QUEBRE ESTAS
+
+Nunca invente preço ou valor.
 Nunca sugira visita para orçamento.
-Nunca confirme dado que o cliente não disse nesta conversa.
-Se perguntarem se você é robô: diga que é a Mary, secretária do Maicon, de forma natural e breve. Não elabore.`;
+Nunca crie ou confirme agendamento sem o cliente pedir nesta conversa agora.
+Nunca confirme nome, endereço ou horário que o cliente não disse nesta conversa.
+Nunca diga "já agendamos", "já marcamos", "já confirmei" sem o cliente ter pedido.
+Se perguntarem se você é robô: "sou a Mary, secretária do Maicon" — curto e natural.`;
 
 
 exports.handler = async (event) => {
@@ -359,8 +371,8 @@ exports.handler = async (event) => {
           userMessageContent = "[O cliente enviou uma foto do problema]";
         }
       } else {
-        // WhatsApp bloqueia acesso ao bitmap real da notificação — pede descrição naturalmente
-        userMessageContent = "[O cliente enviou uma foto mas o sistema não conseguiu acessar a imagem. Peça para o cliente descrever o problema com suas palavras, de forma muito natural, sem mencionar foto, sistema ou limitação técnica. Ex: 'Consegue me descrever o que tá acontecendo? Assim já consigo passar pro Maicon!']";
+        // Imagem não carregou — pede descrição sem mencionar limitação técnica nem usar contexto antigo
+        userMessageContent = "[O cliente enviou uma foto agora. Você não conseguiu ver a imagem. Pergunte de forma natural e curta o que está na foto ou qual é o problema — SEM mencionar nada de conversas anteriores, SEM assumir o assunto, SEM perguntar sobre sofá, tapete ou qualquer serviço específico. Só pergunte o que ele precisa, como se fosse a primeira mensagem.]";
       }
     }
 
@@ -504,7 +516,9 @@ exports.handler = async (event) => {
     const RISK_WORDS = [
       "r$", "reais", "custa", "valor", "preço", "orçamento",
       "rua", "avenida", "av.", "número", "bairro", "endereço",
-      "agendado", "confirmado", "marcado", "visita",
+      "agendado", "confirmado", "marcado", "visita", "agendamos", "marquei", "combinado",
+      "sexta", "segunda", "terça", "quarta", "quinta", "sábado", "domingo",
+      "manhã", "tarde", "às ", "horas", "h da",
       "pintamos", "pintura", "ar condicionado", "pedreiro", "alvenaria",
       "assistente", "inteligência artificial", "ia ", "robô", "bot",
     ];
@@ -514,18 +528,21 @@ exports.handler = async (event) => {
     if (needsReview) {
       try {
         // Revisor minimalista — só bloqueia erros fatais, não reescreve
-        const reviewPrompt = `Você é um validador de respostas. Analise APENAS se a resposta abaixo comete algum destes erros graves:
-1. Inventou um preço ou valor em reais
+        const reviewPrompt = `Você é um validador de respostas de atendimento. Verifique se a resposta abaixo comete algum erro GRAVE:
+
+1. Inventou preço ou valor em reais
 2. Confirmou endereço que o cliente não informou nesta conversa
 3. Disse que faz pintura, pedreiro, alvenaria ou ar-condicionado
-4. Disse explicitamente que é IA, robô ou assistente virtual
+4. Revelou ser IA, robô ou assistente virtual
 5. Tem lista com marcadores (-, •, *)
+6. Disse "já agendamos", "já marquei", "já confirmei", "visita marcada" ou similar SEM o cliente ter pedido agendamento nesta conversa
+7. Inventou data, horário ou dia da semana para um atendimento
 
-Se tiver erro grave: reescreva APENAS a parte problemática, mantendo o resto.
-Se NÃO tiver nenhum erro: copie a resposta EXATAMENTE, sem mudar uma vírgula.
-Retorne SOMENTE o texto da resposta. Nenhum comentário.
+Se encontrar erro grave: corrija SOMENTE a parte errada, mantenha o resto igual.
+Se não houver erro: copie EXATAMENTE a resposta, sem alterar nada.
+Retorne SOMENTE o texto corrigido ou original. Sem comentários.
 
-Resposta:
+Resposta a validar:
 ${reply}`;
 
         const reviewRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
