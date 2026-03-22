@@ -20,6 +20,27 @@ let reconnectTimer = null;
 const humanHandledUntil = new Map();
 const HUMAN_SILENCE_MS = 60 * 60 * 1000; // 1 hora
 
+// Histórico de sessão por contato (evita perda de contexto entre mensagens)
+const sessionHistory = new Map();
+const SESSION_TIMEOUT_MS = 3 * 60 * 60 * 1000; // 3h sem mensagem limpa histórico
+const MAX_HISTORY = 20; // últimas 20 trocas
+
+function getSessionHistory(contact) {
+  const entry = sessionHistory.get(contact);
+  if (!entry) return [];
+  const cutoff = Date.now() - SESSION_TIMEOUT_MS;
+  const filtered = entry.filter(m => m.ts > cutoff);
+  if (filtered.length !== entry.length) sessionHistory.set(contact, filtered);
+  return filtered.map(({ role, content }) => ({ role, content }));
+}
+
+function addToSessionHistory(contact, role, content) {
+  const hist = sessionHistory.get(contact) || [];
+  hist.push({ role, content, ts: Date.now() });
+  if (hist.length > MAX_HISTORY) hist.splice(0, hist.length - MAX_HISTORY);
+  sessionHistory.set(contact, hist);
+}
+
 function getStatus() { return isConnected; }
 function getQR()     { return qrCodeDataURL; }
 function getSock()   { return client; } // compatibilidade com followup.js
@@ -222,6 +243,9 @@ async function handleMessage(msg, MessageMedia) {
   const chat = await msg.getChat().catch(() => null);
   if (chat) await chat.sendStateTyping().catch(() => {});
 
+  // Histórico de sessão (mantém contexto da conversa atual)
+  const history = getSessionHistory(contact);
+
   // Chama Mary
   const event = {
     httpMethod: "POST",
@@ -233,7 +257,7 @@ async function handleMessage(msg, MessageMedia) {
       mediaType,
       imageBase64,
       imageMimeType,
-      history: [],
+      history,
     }),
   };
 
@@ -262,6 +286,10 @@ async function handleMessage(msg, MessageMedia) {
   // Envia resposta
   await client.sendMessage(msg.from, reply);
   console.log(`[WhatsApp] ✅ Resposta enviada para ${senderName} (${reply.length} chars)`);
+
+  // Salva no histórico de sessão
+  addToSessionHistory(contact, "user", text);
+  addToSessionHistory(contact, "assistant", reply);
 }
 
 // ── Limpa sessão ───────────────────────────────────────────────────────────────
