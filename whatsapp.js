@@ -226,10 +226,23 @@ async function handleMessage(msg, MessageMedia) {
   // ── Tipo de mensagem ────────────────────────────────────────────────────────
   if (msg.hasMedia) {
     console.log(`[WhatsApp] ⬇️ Baixando mídia tipo="${msg.type}"...`);
-    const media = await msg.downloadMedia().catch((e) => {
-      console.warn(`[WhatsApp] ⚠️ Falha ao baixar mídia: ${e.message}`);
-      return null;
-    });
+
+    // Tenta até 3x com timeout de 30s — downloadMedia() pode falhar em containers
+    let media = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        media = await Promise.race([
+          msg.downloadMedia(),
+          new Promise((_, rej) => setTimeout(() => rej(new Error("timeout 30s")), 30000)),
+        ]);
+        if (media?.data) break; // sucesso — sai do loop
+        console.warn(`[WhatsApp] ⚠️ Mídia vazia na tentativa ${attempt}/3`);
+      } catch (e) {
+        console.warn(`[WhatsApp] ⚠️ Falha ao baixar mídia (tentativa ${attempt}/3): ${e.message}`);
+      }
+      if (attempt < 3) await sleep(3000); // aguarda antes de tentar novamente
+    }
+    if (!media?.data) console.warn(`[WhatsApp] ❌ Mídia não baixada após 3 tentativas`);
 
     if (msg.type === "image" || msg.type === "sticker") {
       mediaType = msg.type === "sticker" ? "sticker" : "image";

@@ -347,42 +347,56 @@ exports.handler = async (event) => {
     } else if (mediaType === "image") {
       if (imageBase64) {
         // Analisa imagem com modelo de visão via OpenRouter
-        try {
-          const visionRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${OPENROUTER_KEY}`,
-              "Content-Type": "application/json",
-              "HTTP-Referer": "https://webhook-mary.netlify.app",
-              "X-Title": "Mary - Marido de Aluguel Petropolis",
-            },
-            body: JSON.stringify({
-              model: "google/gemini-flash-1.5-8b",
-              messages: [{
-                role: "user",
-                content: [
-                  { type: "text", text: "Você é um assistente de uma empresa de reparos residenciais. Descreva objetivamente o que vê nesta imagem, focando em: qual ambiente é, qual o problema aparente, qual serviço pode ser necessário. Seja direto e breve (máximo 2 frases)." },
-                  { type: "image_url", image_url: { url: `data:${imageMimeType};base64,${imageBase64}` } }
-                ]
-              }],
-              max_tokens: 150,
-            }),
-          });
-          if (visionRes.ok) {
-            const visionData = await visionRes.json();
-            const desc = visionData.choices?.[0]?.message?.content?.trim();
-            if (desc) {
-              userMessageContent = `[O cliente enviou uma foto. Descrição automática: ${desc}]`;
-              console.log("Imagem analisada:", desc);
+        // Tenta gemini-flash-1.5 (visão grátis) → fallback para descrição genérica
+        const visionModels = [
+          "google/gemini-flash-1.5",
+          "google/gemini-flash-1.5-8b",
+          "meta-llama/llama-3.2-11b-vision-instruct:free",
+        ];
+        let visionDone = false;
+        for (const vModel of visionModels) {
+          try {
+            console.log(`[Vision] Tentando modelo: ${vModel} (img ${Math.round(imageBase64.length * 0.75 / 1024)}KB)`);
+            const visionRes = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${OPENROUTER_KEY}`,
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://webhook-mary.netlify.app",
+                "X-Title": "Mary - Marido de Aluguel Petropolis",
+              },
+              body: JSON.stringify({
+                model: vModel,
+                messages: [{
+                  role: "user",
+                  content: [
+                    { type: "text", text: "Você é um assistente de uma empresa de reparos residenciais. Descreva objetivamente o que vê nesta imagem, focando em: qual ambiente é, qual o problema aparente, qual serviço pode ser necessário. Seja direto e breve (máximo 2 frases)." },
+                    { type: "image_url", image_url: { url: `data:${imageMimeType};base64,${imageBase64}` } }
+                  ]
+                }],
+                max_tokens: 200,
+              }),
+            });
+            if (visionRes.ok) {
+              const visionData = await visionRes.json();
+              const desc = visionData.choices?.[0]?.message?.content?.trim();
+              if (desc) {
+                userMessageContent = `[O cliente enviou uma foto. Descrição: ${desc}]`;
+                console.log(`[Vision] ✅ ${vModel}: "${desc.substring(0, 100)}"`);
+                visionDone = true;
+                break;
+              }
             } else {
-              userMessageContent = "[O cliente enviou uma foto do problema]";
+              const errBody = await visionRes.text();
+              console.warn(`[Vision] ❌ ${vModel}: HTTP ${visionRes.status} — ${errBody.substring(0, 150)}`);
             }
-          } else {
-            userMessageContent = "[O cliente enviou uma foto do problema]";
+          } catch (e) {
+            console.warn(`[Vision] ❌ ${vModel}: ${e.message}`);
           }
-        } catch (e) {
-          console.warn("Erro ao analisar imagem:", e.message);
-          userMessageContent = "[O cliente enviou uma foto do problema]";
+        }
+        if (!visionDone) {
+          userMessageContent = "[O cliente enviou uma foto do problema. Agradeça o envio e diga que vai passar pro Maicon analisar.]";
+          console.warn("[Vision] ⚠️ Todos os modelos falharam — usando fallback genérico");
         }
       } else {
         // Imagem não carregou — pede descrição sem mencionar limitação técnica nem usar contexto antigo

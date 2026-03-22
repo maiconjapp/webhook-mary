@@ -13,12 +13,18 @@ async function transcribeAudio(buffer, mimeType = "audio/ogg") {
     return null;
   }
 
-  // Extensão baseada no tipo MIME
-  const ext = mimeType.includes("mp4") ? "mp4"
-    : mimeType.includes("mpeg") || mimeType.includes("mp3") ? "mp3"
-    : mimeType.includes("wav") ? "wav"
-    : mimeType.includes("webm") ? "webm"
-    : "ogg";
+  // Normaliza MIME: WhatsApp envia "audio/ogg; codecs=opus" — remove tudo após ";"
+  const baseMime = mimeType.split(";")[0].trim().toLowerCase();
+
+  // Extensão baseada no tipo MIME normalizado
+  const ext = baseMime.includes("mp4") || baseMime.includes("m4a") ? "m4a"
+    : baseMime.includes("mpeg") || baseMime.includes("mp3") ? "mp3"
+    : baseMime.includes("wav") ? "wav"
+    : baseMime.includes("webm") ? "webm"
+    : baseMime.includes("opus") ? "opus"
+    : "ogg"; // padrão: ogg (WhatsApp ptt)
+
+  console.log(`[Audio] MIME: "${mimeType}" → ext: ".${ext}"`);
 
   const form = new FormData();
   form.append("file", buffer, {
