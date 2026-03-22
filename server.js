@@ -285,6 +285,38 @@ const server = http.createServer(async (req, res) => {
   res.writeHead(404); res.end("Not Found");
 });
 
+// ── Captura erros internos do Puppeteer/whatsapp-web.js que não chegam ao catch ──
+// O erro "Execution context was destroyed" ocorre dentro de async handlers do wwebjs
+// e seria uma rejeição não tratada que derrubaria o processo. Aqui capturamos e
+// reiniciamos o cliente em vez de crashar.
+process.on("unhandledRejection", (reason) => {
+  const msg = reason?.message || String(reason);
+  if (msg.includes("Execution context was destroyed") || msg.includes("Protocol error") || msg.includes("Target closed")) {
+    console.warn("[WhatsApp] ⚠️ Erro interno Puppeteer capturado — reiniciando cliente em 8s...");
+    // Importa e reinicia de forma segura
+    try {
+      const { startWhatsApp: restart } = require("./whatsapp");
+      setTimeout(() => restart().catch(() => {}), 8000);
+    } catch (_) {}
+    return;
+  }
+  // Outros erros: loga mas não derruba
+  console.error("[UnhandledRejection]", msg.substring(0, 300));
+});
+
+process.on("uncaughtException", (err) => {
+  const msg = err?.message || String(err);
+  if (msg.includes("Execution context was destroyed") || msg.includes("Protocol error") || msg.includes("Target closed")) {
+    console.warn("[WhatsApp] ⚠️ Exception Puppeteer capturada — reiniciando cliente em 8s...");
+    try {
+      const { startWhatsApp: restart } = require("./whatsapp");
+      setTimeout(() => restart().catch(() => {}), 8000);
+    } catch (_) {}
+    return;
+  }
+  console.error("[UncaughtException]", msg.substring(0, 300));
+});
+
 // ── Start ─────────────────────────────────────────────────────────────────────
 server.listen(PORT, async () => {
   console.log(`\n🤖 Mary webhook na porta ${PORT}`);

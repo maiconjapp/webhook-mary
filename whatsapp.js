@@ -97,13 +97,9 @@ async function startWhatsApp() {
 
     client = new Client({
       authStrategy: new LocalAuth({ dataPath: "/tmp/wwebjs_auth" }),
-      // Versão travada do WhatsApp Web — evita navegação durante autenticação
-      // que destruía o contexto do Puppeteer ("Execution context was destroyed")
-      webVersion: "2.3000.1015901620",
-      webVersionCache: {
-        type: "remote",
-        remotePath: "https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1015901620.html",
-      },
+      // SEM webVersion fixo — versão fixa impedia descriptografia de mídia.
+      // O crash "Execution context destroyed" agora é capturado no process.on('unhandledRejection')
+      // em server.js, sem precisar travar numa versão antiga do WhatsApp Web.
       puppeteer: {
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium",
         headless: true,
@@ -205,11 +201,30 @@ async function handleMessage(msg, MessageMedia) {
     return;
   }
 
+  // Ignora notificações e mensagens de sistema do WhatsApp
+  // (ex: "2 mensagens de 2 conversas", "Procurando novas mensagens", "Acesso recente ao WhatsApp")
+  const systemNotifPatterns = [
+    /mensagens? de \d+ conversa/i,
+    /procurando novas mensagens/i,
+    /acesso recente ao whatsapp/i,
+    /você acessou o whatsapp/i,
+    /use o whatsapp em até/i,
+  ];
+  if (systemNotifPatterns.some(p => p.test(msg.body || ""))) {
+    console.log(`[WhatsApp] ⚠️ Notificação de sistema ignorada: "${(msg.body||'').substring(0,50)}"`);
+    return;
+  }
+
   // Ignora contas Business (bancos, apps, serviços automáticos)
   try {
     const contactInfo = await msg.getContact();
     if (contactInfo?.isBusiness) {
       console.log(`[WhatsApp] ⚠️ Conta Business ignorada: ${contactInfo.pushname || contactRaw}`);
+      return;
+    }
+    // Ignora se pushname for "WhatsApp" (notificações do sistema)
+    if (contactInfo?.pushname === "WhatsApp") {
+      console.log(`[WhatsApp] ⚠️ Mensagem de sistema WhatsApp ignorada`);
       return;
     }
   } catch (_) {} // silencia erro — continua processando se falhar
