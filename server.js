@@ -2,7 +2,7 @@ const http = require("http");
 const { handler } = require("./netlify/functions/webhook");
 const { getAllMemory, getAllClientsForDashboard, getDashboardStats,
         getBlockedNumbers, blockNumber, unblockNumber } = require("./memory");
-const { startWhatsApp, getQR, getStatus, getSock, getHumanHandledList } = require("./whatsapp");
+const { startWhatsApp, getQR, getStatus, getSock, getHumanHandledList, resetHumanHandled } = require("./whatsapp");
 const { sendFollowUpBatch, isBatchInProgress } = require("./followup");
 const { getDashboardHTML } = require("./dashboard");
 const { chatWithAssistant } = require("./assistant");
@@ -220,6 +220,18 @@ const server = http.createServer(async (req, res) => {
         <h2>⏳ Gerando QR...</h2><p>Aguarde e recarregue.</p>
       </body></html>`);
     }
+    return;
+  }
+
+  // ── Reset silêncio humano ───────────────────────────────────────────────────
+  // POST /api/reset-human        → libera todos os contatos
+  // POST /api/reset-human/NUMERO → libera contato específico
+  if (req.method === "POST" && path.startsWith("/api/reset-human")) {
+    if (!checkAuth(req, res)) return;
+    const numero = path.replace("/api/reset-human", "").replace(/^\//, "") || null;
+    resetHumanHandled(numero || null);
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, msg: numero ? `Mary liberada para ${numero}` : "Mary liberada para todos os contatos" }));
     return;
   }
 

@@ -54,6 +54,16 @@ function markHumanHandled(contact) {
   console.log(`[WhatsApp] 🙋 Humano assumiu conversa de "${contact}" — Mary em silêncio por 1h`);
 }
 
+function resetHumanHandled(contact) {
+  if (contact) {
+    humanHandledUntil.delete(contact);
+    console.log(`[WhatsApp] 🔓 Silêncio removido para "${contact}" — Mary voltou a responder`);
+  } else {
+    humanHandledUntil.clear();
+    console.log(`[WhatsApp] 🔓 Silêncio removido para TODOS — Mary voltou a responder`);
+  }
+}
+
 function isHumanHandling(contact) {
   if (!humanHandledUntil.has(contact)) return false;
   if (Date.now() - humanHandledUntil.get(contact) > HUMAN_SILENCE_MS) {
@@ -188,6 +198,22 @@ async function handleMessage(msg, MessageMedia) {
   // Só processa contatos individuais reais (@c.us) — ignora grupos, sistema, status
   if (!msg.from.endsWith("@c.us")) return;
 
+  // Ignora números de sistema (WhatsApp notifications = "0", números < 5 dígitos)
+  const contactRaw = msg.from.replace("@c.us", "");
+  if (contactRaw.length < 5 || contactRaw === "0") {
+    console.log(`[WhatsApp] ⚠️ Número de sistema ignorado: ${contactRaw}`);
+    return;
+  }
+
+  // Ignora contas Business (bancos, apps, serviços automáticos)
+  try {
+    const contactInfo = await msg.getContact();
+    if (contactInfo?.isBusiness) {
+      console.log(`[WhatsApp] ⚠️ Conta Business ignorada: ${contactInfo.pushname || contactRaw}`);
+      return;
+    }
+  } catch (_) {} // silencia erro — continua processando se falhar
+
   // Dedup por ID de mensagem — evita dupla resposta
   const msgId = msg.id?._serialized || `${msg.from}:${msg.timestamp}`;
   if (_processedMsgIds.has(msgId)) {
@@ -204,7 +230,7 @@ async function handleMessage(msg, MessageMedia) {
     return;
   }
 
-  const contact = msg.from.replace("@c.us", "");
+  const contact = contactRaw;
 
   // Verifica bloqueados
   if (await isBlocked(contact)) {
@@ -377,4 +403,4 @@ async function clearAuthState() {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-module.exports = { startWhatsApp, getQR, getStatus, getSock, getHumanHandledList, clearAuthState };
+module.exports = { startWhatsApp, getQR, getStatus, getSock, getHumanHandledList, resetHumanHandled, clearAuthState };
