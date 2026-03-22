@@ -118,6 +118,12 @@ async function startWhatsApp() {
           "--metrics-recording-only",
           "--mute-audio",
           "--hide-scrollbars",
+          // Desabilita cache do browser — garante que WA Web JS seja sempre fresco
+          // (cache antigo causava hasMedia=false para fotos e áudios)
+          "--disable-application-cache",
+          "--disable-cache",
+          "--disk-cache-size=1",
+          "--media-cache-size=1",
         ],
       },
     });
@@ -265,6 +271,9 @@ async function handleMessage(msg, MessageMedia) {
   let imageMimeType = "image/jpeg";
 
   // ── Tipo de mensagem ────────────────────────────────────────────────────────
+  // Log de diagnóstico — mostra tipo e hasMedia para confirmar que mídia é detectada
+  console.log(`[WhatsApp] DEBUG type="${msg.type}" hasMedia=${msg.hasMedia} body="${(msg.body||'').substring(0,30)}"`);
+
   if (msg.hasMedia) {
     console.log(`[WhatsApp] ⬇️ Baixando mídia tipo="${msg.type}"...`);
 

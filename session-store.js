@@ -107,6 +107,24 @@ async function restoreSession() {
         console.log("[Session] Lock files removidos");
       } catch (_) {}
 
+      // Limpa cache do Chrome — o cache pode conter WhatsApp Web JS antigo
+      // que não consegue deserializar mídia moderna (imagens e áudios chegam como texto)
+      const cacheKillers = [
+        "Default/Cache",
+        "Default/Code Cache",
+        "Default/GPUCache",
+        "Default/Service Worker",
+        "Default/CacheStorage",
+        "Default/IndexedDB/https_web.whatsapp.com_0.indexeddb.leveldb/LOCK",
+      ];
+      for (const rel of cacheKillers) {
+        try {
+          // Procura em subdiretórios (session-*/Default/Cache etc)
+          execSync(`find ${SESSION_DIR} -path "*/${rel}" -exec rm -rf {} + 2>/dev/null || true`, { stdio: "ignore" });
+        } catch (_) {}
+      }
+      console.log("[Session] Cache do Chrome limpo — WA Web JS fresco será carregado");
+
       console.log(`[Session] ✅ Sessão restaurada do PostgreSQL (${Math.round(data.length / 1024)}KB)`);
       return true;
     }
