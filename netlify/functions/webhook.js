@@ -401,9 +401,14 @@ exports.handler = async (event) => {
           userMessageContent = "[O cliente enviou uma foto do problema. Agradeça o envio e diga que vai passar pro Maicon analisar.]";
           console.warn("[Vision] ⚠️ Todos os modelos falharam — usando fallback genérico");
         }
+      } else if (message && message.trim().length > 2) {
+        // Imagem sem dados MAS com texto real no body (ex: "Antes de mandar foto, me fala o valor")
+        // Trata como texto puro — deixa o modelo responder normalmente ao conteúdo da mensagem
+        userMessageContent = message;
+        console.log("[Webhook] Imagem sem dados com texto — tratando como texto puro");
       } else {
-        // Imagem não carregou — pede descrição sem mencionar limitação técnica nem usar contexto antigo
-        userMessageContent = "[O cliente enviou uma foto agora. Você não conseguiu ver a imagem. Pergunte de forma natural e curta o que está na foto ou qual é o problema — SEM mencionar nada de conversas anteriores, SEM assumir o assunto, SEM perguntar sobre sofá, tapete ou qualquer serviço específico. Só pergunte o que ele precisa, como se fosse a primeira mensagem.]";
+        // Imagem realmente vazia (sem body nem dados)
+        userMessageContent = "[O cliente enviou uma foto. Agradeça o envio e diga que vai passar pro Maicon analisar.]";
       }
     }
 
