@@ -423,8 +423,8 @@ async function loadClients() {
     renderTable();
     renderFollowUpList();
     updateStatCards({
-      total_clients: allClients.length,
-      active_last_30d: allClients.filter(c => (c.days_since_contact||99) <= 30).length,
+      total_clients: allClients.filter(c => classifyClient(c) !== 'lixo').length,
+      active_last_30d: allClients.filter(c => classifyClient(c) !== 'lixo' && (c.days_since_contact||99) <= 30).length,
       followups_sent_today: 0,
     });
   } catch(e) {

@@ -53,6 +53,15 @@ async function sendFollowUpBatch(contacts, template, getSock, onProgress) {
   try {
     for (let i = 0; i < contacts.length; i++) {
       const client = contacts[i];
+
+      // Valida se contact é um número de telefone real (10–15 dígitos)
+      if (!/^\d{10,15}$/.test((client.contact || '').replace(/\D/g, ''))) {
+        console.warn(`[FollowUp] ⚠️ Contato inválido ignorado: "${client.contact}"`);
+        results.push({ contact: client.contact, status: "skipped", error: "não é telefone válido" });
+        onProgress?.({ contact: client.contact, nome: client.nome, status: "failed", error: "contato inválido — não é telefone" });
+        continue;
+      }
+
       // whatsapp-web.js usa @c.us (não @s.whatsapp.net do Baileys)
       const jid = `${client.contact}@c.us`;
       const msg = personalize(template, client);
