@@ -41,6 +41,7 @@ async function sendFollowUpBatch(contacts, template, getSock, onProgress) {
     throw new Error("Máximo de 5 contatos por lote para evitar ban.");
   }
 
+  // getSock() retorna o client do whatsapp-web.js
   const sock = getSock();
   if (!sock) {
     throw new Error("WhatsApp não está conectado. Vincule o dispositivo em /qr");
@@ -52,7 +53,8 @@ async function sendFollowUpBatch(contacts, template, getSock, onProgress) {
   try {
     for (let i = 0; i < contacts.length; i++) {
       const client = contacts[i];
-      const jid = `${client.contact}@s.whatsapp.net`;
+      // whatsapp-web.js usa @c.us (não @s.whatsapp.net do Baileys)
+      const jid = `${client.contact}@c.us`;
       const msg = personalize(template, client);
 
       onProgress?.({ contact: client.contact, nome: client.nome, status: "sending" });
@@ -61,15 +63,21 @@ async function sendFollowUpBatch(contacts, template, getSock, onProgress) {
         // Marca imediatamente para evitar duplo envio em caso de crash
         await markFollowUpSent(client.contact);
 
-        // Indicador de digitação
-        await sock.sendPresenceUpdate("composing", jid);
+        // Indicador de digitação via whatsapp-web.js
+        let chat = null;
+        try {
+          chat = await sock.getChatById(jid);
+          await chat.sendStateTyping();
+        } catch (_) {} // não crítico — continua mesmo sem typing
 
         // Delay de digitação: 1.5–3s
         await sleep(1500 + Math.random() * 1500);
 
-        // Envia a mensagem
-        await sock.sendMessage(jid, { text: msg });
-        await sock.sendPresenceUpdate("paused", jid);
+        // Envia a mensagem — API whatsapp-web.js
+        await sock.sendMessage(jid, msg);
+
+        // Para o indicador de digitação
+        try { if (chat) await chat.clearState(); } catch (_) {}
 
         results.push({ contact: client.contact, status: "sent" });
         onProgress?.({ contact: client.contact, nome: client.nome, status: "sent", msg });
