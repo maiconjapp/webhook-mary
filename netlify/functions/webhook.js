@@ -323,7 +323,15 @@ exports.handler = async (event) => {
     let userMessageContent = message || "";
 
     // Detecta respostas de negação de foto para evitar loop fantasma
-    const isPhotoDecline = mediaType === "text" && /n[ãa]o (tenho|consigo|tenho como|mandei|enviei)|sem foto|n[ãa]o (enviei|mand)/i.test(message || "");
+    // Normaliza texto removendo acentos para tornar o regex robusto
+    const _msgNorm = (message || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    const isPhotoDecline = mediaType === 'text' && (
+      /nao (tenho|consigo|mandar|mandei|enviei|tenho como)/.test(_msgNorm) ||
+      /sem (foto|imagem)/.test(_msgNorm) ||
+      /nao (foto|imagem)/.test(_msgNorm) ||
+      /(foto|imagem).*(nao|agora|depois|mais tarde)/.test(_msgNorm) ||
+      /nao vou (mandar|enviar)/.test(_msgNorm)
+    );
     if (isPhotoDecline) {
       userMessageContent = `[MENSAGEM DE TEXTO — cliente NÃO enviou imagem. Ele não tem foto agora. Responda: "Tudo bem! Quando tiver uma foto é só me enviar. Tem mais alguma dúvida que posso te ajudar?" — curto e natural.]`;
       console.log(`[Webhook] 📵 Cliente declinou foto: "${(message||"").substring(0,50)}"`);
