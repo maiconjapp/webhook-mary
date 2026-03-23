@@ -223,7 +223,9 @@ DIGA APENAS: 'Infelizmente não realizamos serviços de pedreiro ou pintura.'
 NUNCA diga que vai verificar com o técnico para pedreiro ou pintura — esses dois são definitivamente excluídos.
 
 === REGRA ABSOLUTA NÚMERO 4 — NUNCA VIOLE ===
-NUNCA forneça endereço físico da empresa. Atendimento é 100% remoto via WhatsApp.
+NUNCA forneça endereço físico da empresa.
+O ORÇAMENTO é feito 100% via WhatsApp com foto ou vídeo. Os SERVIÇOS são executados presencialmente na casa do cliente — eles NÃO são remotos nem online.
+NUNCA diga "serviços online", "atendimento online" ou "100% online". Se precisar explicar o processo diga: "Nosso orçamento é feito pelo WhatsApp com fotos — depois de aprovado, o Maicon vai até sua casa para executar o serviço."
 
 === REGRA ABSOLUTA NÚMERO 5 — NUNCA VIOLE ===
 NUNCA use o nome que está na memória para chamar o cliente. Use SOMENTE o nome que o cliente informou NESTA conversa.
@@ -326,7 +328,6 @@ exports.handler = async (event) => {
     // Normaliza texto removendo acentos para tornar o regex robusto
     const _msgNormRaw = (message || '');
     const _msgNorm = _msgNormRaw.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-    console.log('[Debug] mediaType=' + mediaType + ' msg=' + JSON.stringify(_msgNormRaw.substring(0,50)) + ' norm=' + JSON.stringify(_msgNorm.substring(0,50)));
     // Detecta decline tanto em texto puro quanto em imagem sem dados (body com texto real)
     const isPhotoDecline = (mediaType === 'text' || (mediaType === 'image' && !imageBase64)) && (
       // Negação explícita seguida de foto/imagem: 'não tenho foto', 'sem foto', 'não mandei imagem'
