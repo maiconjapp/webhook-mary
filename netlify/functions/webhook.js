@@ -324,7 +324,9 @@ exports.handler = async (event) => {
 
     // Detecta respostas de negação de foto para evitar loop fantasma
     // Normaliza texto removendo acentos para tornar o regex robusto
-    const _msgNorm = (message || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    const _msgNormRaw = (message || '');
+    const _msgNorm = _msgNormRaw.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    console.log('[Debug] mediaType=' + mediaType + ' msg=' + JSON.stringify(_msgNormRaw.substring(0,50)) + ' norm=' + JSON.stringify(_msgNorm.substring(0,50)));
     const isPhotoDecline = mediaType === 'text' && (
       /nao (tenho|consigo|mandar|mandei|enviei|tenho como)/.test(_msgNorm) ||
       /sem (foto|imagem)/.test(_msgNorm) ||
