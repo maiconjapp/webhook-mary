@@ -322,7 +322,12 @@ exports.handler = async (event) => {
     // Processa mídia recebida
     let userMessageContent = message || "";
 
-    if (mediaType === "audio") {
+    // Detecta respostas de negação de foto para evitar loop fantasma
+    const isPhotoDecline = mediaType === "text" && /n[ãa]o (tenho|consigo|tenho como|mandei|enviei)|sem foto|n[ãa]o (enviei|mand)/i.test(message || "");
+    if (isPhotoDecline) {
+      userMessageContent = `[MENSAGEM DE TEXTO — cliente NÃO enviou imagem. Ele não tem foto agora. Responda: "Tudo bem! Quando tiver uma foto é só me enviar. Tem mais alguma dúvida que posso te ajudar?" — curto e natural.]`;
+      console.log(`[Webhook] 📵 Cliente declinou foto: "${(message||"").substring(0,50)}"`);
+    } else if (mediaType === "audio") {
       userMessageContent = "[O cliente enviou um áudio. Você não consegue ouvir áudios diretamente. Peça gentilmente para o cliente digitar o que precisa, de forma natural e sem explicar que é limitação técnica.]";
     } else if (mediaType === "video") {
       userMessageContent = "[O cliente enviou um vídeo. Você não consegue ver vídeos. Peça para o cliente descrever o problema ou enviar uma foto, de forma natural.]";
