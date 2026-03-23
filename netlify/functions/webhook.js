@@ -329,11 +329,12 @@ exports.handler = async (event) => {
     console.log('[Debug] mediaType=' + mediaType + ' msg=' + JSON.stringify(_msgNormRaw.substring(0,50)) + ' norm=' + JSON.stringify(_msgNorm.substring(0,50)));
     // Detecta decline tanto em texto puro quanto em imagem sem dados (body com texto real)
     const isPhotoDecline = (mediaType === 'text' || (mediaType === 'image' && !imageBase64)) && (
-      /nao (tenho|consigo|mandar|mandei|enviei|tenho como)/.test(_msgNorm) ||
-      /sem (foto|imagem)/.test(_msgNorm) ||
-      /nao (foto|imagem)/.test(_msgNorm) ||
-      /(foto|imagem).*(nao|agora|depois|mais tarde)/.test(_msgNorm) ||
-      /nao vou (mandar|enviar)/.test(_msgNorm)
+      // Negação explícita seguida de foto/imagem: 'não tenho foto', 'sem foto', 'não mandei imagem'
+      /(nao|sem).{0,15}(foto|imagem)/.test(_msgNorm) ||
+      // Negação de ação de envio: 'não consigo mandar', 'não vou enviar', 'não mandei'
+      /nao (consigo|vou|tenho como).{0,15}(mandar|enviar|tirar)/.test(_msgNorm) ||
+      // Impossibilidade direta sem foto
+      /nao (mandei|enviei).{0,10}(foto|imagem|nada|nenhuma)/.test(_msgNorm)
     );
     if (isPhotoDecline) {
       userMessageContent = `[MENSAGEM DE TEXTO — cliente NÃO enviou imagem. Ele não tem foto agora. Responda: "Tudo bem! Quando tiver uma foto é só me enviar. Tem mais alguma dúvida que posso te ajudar?" — curto e natural.]`;
